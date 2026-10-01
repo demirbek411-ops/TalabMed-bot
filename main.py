@@ -8,7 +8,7 @@ from aiogram.types import (
     InlineKeyboardMarkup, InlineKeyboardButton,
 )
 
-TOKEN = os.environ["BOT_TOKEN"]
+TOKEN = "".join(os.environ["BOT_TOKEN"].split())
 
 CHANNELS = [
     ("📢 Talaba Med", "@TalabaMed_2025"),
