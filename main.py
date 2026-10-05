@@ -4,11 +4,19 @@ from aiohttp import web
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import CommandStart
 from aiogram.types import (
-    Message, CallbackQuery,
+    Message, CallbackQuery, FSInputFile,
     InlineKeyboardMarkup, InlineKeyboardButton,
+    WebAppInfo, MenuButtonWebApp,
 )
 
 TOKEN = "".join(os.environ["BOT_TOKEN"].split())
+
+SITE_URL = "https://demirbek411-ops.github.io/TalabaMed-site/"
+
+WELCOME_TEXT = (
+    "Xush kelibsiz! 🎉\n\n"
+    "Saytni ochish uchun pastdagi «Ilovani Ochish» tugmasini bosing."
+)
 
 CHANNELS = [
     ("📢 Talaba Med", "@TalabaMed_2025"),
@@ -44,6 +52,29 @@ def sub_keyboard(channels):
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+async def send_main(chat_id):
+    if os.path.exists("welcome.jpg"):
+        await bot.send_photo(chat_id, FSInputFile("welcome.jpg"), caption=WELCOME_TEXT)
+    else:
+        await bot.send_message(chat_id, WELCOME_TEXT)
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="🌐 Saytni ochish", web_app=WebAppInfo(url=SITE_URL))
+    ]])
+    await bot.send_message(chat_id, "Saytni ochish uchun tugmani bosing.", reply_markup=kb)
+
+    try:
+        await bot.set_chat_menu_button(
+            chat_id=chat_id,
+            menu_button=MenuButtonWebApp(
+                text="Ilovani Ochish",
+                web_app=WebAppInfo(url=SITE_URL),
+            ),
+        )
+    except Exception as e:
+        print("Menu tugma xatosi:", e)
+
+
 @dp.message(CommandStart())
 async def start(msg: Message):
     left = await not_subscribed(msg.from_user.id)
@@ -54,7 +85,7 @@ async def start(msg: Message):
             reply_markup=sub_keyboard(left),
         )
     else:
-        await msg.answer("Xush kelibsiz! 🎉")
+        await send_main(msg.chat.id)
 
 
 @dp.callback_query(F.data == "check")
@@ -67,8 +98,12 @@ async def check(cb: CallbackQuery):
         except Exception:
             pass
     else:
-        await cb.message.edit_text("Rahmat! Endi botdan foydalanishingiz mumkin ✅")
         await cb.answer()
+        try:
+            await cb.message.delete()
+        except Exception:
+            pass
+        await send_main(cb.message.chat.id)
 
 
 async def health(request):
