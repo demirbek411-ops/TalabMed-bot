@@ -115,7 +115,6 @@ async def check(cb: CallbackQuery):
 # ---------- Sayt uchun obuna tekshiruvi ----------
 
 def user_from_init_data(init_data):
-    """Telegram initData imzosini tekshiradi va foydalanuvchini qaytaradi."""
     try:
         pairs = dict(parse_qsl(init_data, keep_blank_values=True))
         received = pairs.pop("hash", None)
