@@ -1,5 +1,10 @@
 import os
+import hmac
+import json
+import time
+import hashlib
 import asyncio
+from urllib.parse import parse_qsl
 from aiohttp import web
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import CommandStart
@@ -12,6 +17,7 @@ from aiogram.types import (
 TOKEN = "".join(os.environ["BOT_TOKEN"].split())
 
 SITE_URL = "https://demirbek411-ops.github.io/TalabaMed-site/"
+SITE_ORIGIN = "https://demirbek411-ops.github.io"
 
 WELCOME_TEXT = (
     "Xush kelibsiz! 🎉\n\n"
@@ -106,13 +112,63 @@ async def check(cb: CallbackQuery):
         await send_main(cb.message.chat.id)
 
 
+# ---------- Sayt uchun obuna tekshiruvi ----------
+
+def user_from_init_data(init_data):
+    """Telegram initData imzosini tekshiradi va foydalanuvchini qaytaradi."""
+    try:
+        pairs = dict(parse_qsl(init_data, keep_blank_values=True))
+        received = pairs.pop("hash", None)
+        if not received:
+            return None
+        data_check = "\n".join(f"{k}={v}" for k, v in sorted(pairs.items()))
+        secret = hmac.new(b"WebAppData", TOKEN.encode(), hashlib.sha256).digest()
+        calc = hmac.new(secret, data_check.encode(), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(calc, received):
+            return None
+        if time.time() - int(pairs.get("auth_date", "0")) > 86400:
+            return None
+        return json.loads(pairs["user"])
+    except Exception as e:
+        print("initData xatosi:", e)
+        return None
+
+
+@web.middleware
+async def cors_mw(request, handler):
+    if request.method == "OPTIONS":
+        resp = web.Response()
+    else:
+        resp = await handler(request)
+    resp.headers["Access-Control-Allow-Origin"] = SITE_ORIGIN
+    resp.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
+    resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
+    return resp
+
+
+async def api_check(request):
+    if request.method == "OPTIONS":
+        return web.Response()
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"ok": False, "error": "bad_request"}, status=400)
+    user = user_from_init_data(body.get("initData", ""))
+    if not user:
+        return web.json_response({"ok": False, "error": "invalid"}, status=403)
+    left = await not_subscribed(user["id"])
+    missing = [{"name": n, "url": f"https://t.me/{u[1:]}"} for n, u in left]
+    return web.json_response({"ok": not left, "missing": missing})
+
+
 async def health(request):
     return web.Response(text="OK")
 
 
 async def main():
-    app = web.Application()
+    app = web.Application(middlewares=[cors_mw])
     app.router.add_get("/", health)
+    app.router.add_route("*", "/api/check", api_check)
     runner = web.AppRunner(app)
     await runner.setup()
     await web.TCPSite(runner, "0.0.0.0", int(os.environ.get("PORT", 8080))).start()
