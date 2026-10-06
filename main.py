@@ -35,7 +35,7 @@ CONTACT = "@Demirbek_17_09"
 WELCOME_TEXT = (
     "🩺 TALABA MED: tibbiyot talabasi uchun test ilovasi\n\n"
     "Imtihon oldidan faqat darslik emas, o'zingizni sinab ko'rish ham kerak. 📲\n\n"
-    "🔹 Yakuniy fanlar bo'yicha 3000 dan ortiq test (Gistologiya, Anatomiya, Psixologiya; UZB va RUS)\n"
+    "🔹 O'zbek va rus potoklari uchun yakuniy testlar ham bor: Gistologiya, Anatomiya, Psixologiya (3000 dan ortiq test)\n"
     "🔹 Imtihon rejimi: 20 ta test, 10 daqiqa, natija foiz va ballda\n"
     "🔹 Xatolarni takrorlash va tasodifiy testlar\n"
     "🔹 Gistologiya seminar mashg'ulotlari: mavzular bo'yicha vaziyatli testlar\n"
@@ -48,7 +48,7 @@ WELCOME_TEXT = (
 ABOUT_TEXT = (
     "ℹ️ Bot haqida\n\n"
     "TALABA MED tibbiyot talabalari uchun yaratilgan. Bot orqali ilovani ochib, "
-    "yakuniy fanlar testlari, imtihon rejimi, xatolarni takrorlash va yozma ish biletlaridan foydalanasiz.\n\n"
+    "o'zbek va rus potoklari uchun yakuniy fanlar testlari, imtihon rejimi, xatolarni takrorlash va yozma ish biletlaridan foydalanasiz.\n\n"
     "Ilova uchun uchala kanal/guruhga obuna bo'lish shart. Fikr va takliflaringizni "
     "«💬 Fikr bildirish» tugmasi orqali yuboring."
 )
@@ -67,7 +67,7 @@ MENU = ReplyKeyboardMarkup(
         [KeyboardButton(text=BTN_CONTACT), KeyboardButton(text=BTN_FEEDBACK)],
     ],
     resize_keyboard=True,
-    is_persistent=True,
+    one_time_keyboard=True,
 )
 
 feedback_mode = {}   # user_id -> "anon" | "named" | "choose"
@@ -220,6 +220,12 @@ async def start(msg: Message):
         )
     else:
         await send_main(msg.chat.id)
+
+
+@dp.message(Command("menu"))
+async def menu_cmd(msg: Message):
+    feedback_mode.pop(msg.from_user.id, None)
+    await msg.answer("Menyu pastda. Uni ochish uchun yozuv maydonidagi ▦ tugmasini bosing.", reply_markup=MENU)
 
 
 @dp.callback_query(F.data == "check")
