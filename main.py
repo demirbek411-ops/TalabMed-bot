@@ -13,7 +13,7 @@ from aiogram.filters import CommandStart, Command
 from aiogram.types import (
     Message, CallbackQuery, FSInputFile,
     InlineKeyboardMarkup, InlineKeyboardButton,
-    ReplyKeyboardRemove, BotCommand,
+    ReplyKeyboardMarkup, KeyboardButton,
     WebAppInfo, MenuButtonWebApp,
 )
 
@@ -42,7 +42,7 @@ WELCOME_TEXT = (
     "🔹 Anatomiya va Psixologiya yozma ish biletlari\n"
     "🔹 Ilova ikki tilda ishlaydi: UZ | RU\n\n"
     "Vaqtingizni material qidirishga emas, tayyorgarlikka sarflang. 💪\n\n"
-    "👉 Boshlash uchun pastdagi «Ilovani Ochish» tugmasini bosing."
+    "👉 Boshlash uchun pastdagi «Ilovani Ochish» tugmasini yoki ▦ menyuni bosing."
 )
 
 ABOUT_TEXT = (
@@ -50,7 +50,24 @@ ABOUT_TEXT = (
     "TALABA MED tibbiyot talabalari uchun yaratilgan. Bot orqali ilovani ochib, "
     "o'zbek va rus potoklari uchun yakuniy fanlar testlari, imtihon rejimi, xatolarni takrorlash va yozma ish biletlaridan foydalanasiz.\n\n"
     "Ilova uchun uchala kanal/guruhga obuna bo'lish shart. Fikr va takliflaringizni "
-    "menyudagi «💬 Fikr bildirish» tugmasi orqali yuboring."
+    "«💬 Fikr bildirish» tugmasi orqali yuboring."
+)
+
+BTN_APP = "🌐 Ilovani ochish"
+BTN_BOOKS = "📚 Kitoblar"
+BTN_ABOUT = "ℹ️ Bot haqida"
+BTN_CHANNELS = "📢 Kanallar"
+BTN_CONTACT = "📞 Aloqa"
+BTN_FEEDBACK = "💬 Fikr bildirish"
+
+MENU = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text=BTN_APP), KeyboardButton(text=BTN_BOOKS)],
+        [KeyboardButton(text=BTN_ABOUT), KeyboardButton(text=BTN_CHANNELS)],
+        [KeyboardButton(text=BTN_CONTACT), KeyboardButton(text=BTN_FEEDBACK)],
+    ],
+    resize_keyboard=True,
+    one_time_keyboard=True,
 )
 
 feedback_mode = {}   # user_id -> "anon" | "named" | "choose"
@@ -96,36 +113,11 @@ def app_keyboard(url, text="🌐 Saytni ochish"):
     ]])
 
 
-def inline_menu():
-    books = (
-        InlineKeyboardButton(text="📚 Kitoblar", web_app=WebAppInfo(url=BOOKS_URL))
-        if BOOKS_URL else
-        InlineKeyboardButton(text="📚 Kitoblar", callback_data="m_books")
-    )
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🌐 Ilovani ochish", web_app=WebAppInfo(url=SITE_URL))],
-        [books, InlineKeyboardButton(text="ℹ️ Bot haqida", callback_data="m_about")],
-        [InlineKeyboardButton(text="📢 Kanallar", callback_data="m_channels"),
-         InlineKeyboardButton(text="📞 Aloqa", url=f"https://t.me/{CONTACT[1:]}")],
-        [InlineKeyboardButton(text="💬 Fikr bildirish", callback_data="m_feedback")],
-    ])
-
-
-async def clear_old_keyboard(chat_id):
-    """Oldingi versiyadan qolgan pastdagi tugmalar panelini olib tashlaydi."""
-    try:
-        m = await bot.send_message(chat_id, "⏳", reply_markup=ReplyKeyboardRemove())
-        await m.delete()
-    except Exception:
-        pass
-
-
 async def send_main(chat_id):
-    await clear_old_keyboard(chat_id)
     if os.path.exists("welcome.jpg"):
-        await bot.send_photo(chat_id, FSInputFile("welcome.jpg"), caption=WELCOME_TEXT, reply_markup=inline_menu())
+        await bot.send_photo(chat_id, FSInputFile("welcome.jpg"), caption=WELCOME_TEXT, reply_markup=MENU)
     else:
-        await bot.send_message(chat_id, WELCOME_TEXT, reply_markup=inline_menu())
+        await bot.send_message(chat_id, WELCOME_TEXT, reply_markup=MENU)
 
     try:
         await bot.set_chat_menu_button(
@@ -231,7 +223,7 @@ async def start(msg: Message):
 @dp.message(Command("menu"))
 async def menu_cmd(msg: Message):
     feedback_mode.pop(msg.from_user.id, None)
-    await msg.answer("📋 Menyu:", reply_markup=inline_menu())
+    await msg.answer("Menyu pastda. Uni ochish uchun yozuv maydonidagi ▦ tugmasini bosing.", reply_markup=MENU)
 
 
 @dp.callback_query(F.data == "check")
@@ -252,36 +244,71 @@ async def check(cb: CallbackQuery):
         await send_main(cb.message.chat.id)
 
 
-# ---------- Menyu tugmalari ----------
+# ---------- Pastdagi tugmalar paneli ----------
 
-@dp.callback_query(F.data == "m_books")
-async def m_books(cb: CallbackQuery):
-    await cb.answer("📚 Kitoblar bo'limi tez orada ochiladi!", show_alert=True)
+async def need_subscribe(msg: Message):
+    """Obuna bo'lmagan bo'lsa, so'rov yuboradi va True qaytaradi."""
+    left = await not_subscribed(msg.from_user.id)
+    if left:
+        await msg.answer(
+            "Avval quyidagilarga obuna bo'ling, so'ng «Tekshirish» tugmasini bosing:",
+            reply_markup=sub_keyboard(left),
+        )
+        return True
+    return False
 
 
-@dp.callback_query(F.data == "m_about")
-async def m_about(cb: CallbackQuery):
-    await cb.answer()
-    await cb.message.answer(ABOUT_TEXT)
+@dp.message(F.text == BTN_APP)
+async def btn_app(msg: Message):
+    feedback_mode.pop(msg.from_user.id, None)
+    if await need_subscribe(msg):
+        return
+    await msg.answer("Ilovani ochish uchun tugmani bosing.", reply_markup=app_keyboard(SITE_URL))
 
 
-@dp.callback_query(F.data == "m_channels")
-async def m_channels(cb: CallbackQuery):
-    await cb.answer()
+@dp.message(F.text == BTN_BOOKS)
+async def btn_books(msg: Message):
+    feedback_mode.pop(msg.from_user.id, None)
+    if await need_subscribe(msg):
+        return
+    if not BOOKS_URL:
+        await msg.answer("📚 Kitoblar bo'limi tez orada ochiladi. Kuzatib boring!")
+        return
+    await msg.answer("Kitoblar sahifasini ochish uchun tugmani bosing.",
+                     reply_markup=app_keyboard(BOOKS_URL, "📚 Kitoblarni ochish"))
+
+
+@dp.message(F.text == BTN_ABOUT)
+async def btn_about(msg: Message):
+    feedback_mode.pop(msg.from_user.id, None)
+    await msg.answer(ABOUT_TEXT)
+
+
+@dp.message(F.text == BTN_CHANNELS)
+async def btn_channels(msg: Message):
+    feedback_mode.pop(msg.from_user.id, None)
     rows = [[InlineKeyboardButton(text=n, url=f"https://t.me/{u[1:]}")] for n, u in CHANNELS]
-    await cb.message.answer("📢 Bizning kanal va guruhlar:", reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+    await msg.answer("📢 Bizning kanal va guruhlar:", reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
 
 
-@dp.callback_query(F.data == "m_feedback")
-async def m_feedback(cb: CallbackQuery):
-    await cb.answer()
-    feedback_mode[cb.from_user.id] = "choose"
+@dp.message(F.text == BTN_CONTACT)
+async def btn_contact(msg: Message):
+    feedback_mode.pop(msg.from_user.id, None)
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="✉️ Yozish", url=f"https://t.me/{CONTACT[1:]}")
+    ]])
+    await msg.answer(f"📞 Aloqa uchun: {CONTACT}", reply_markup=kb)
+
+
+@dp.message(F.text == BTN_FEEDBACK)
+async def btn_feedback(msg: Message):
+    feedback_mode[msg.from_user.id] = "choose"
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🕶 Anonim yuborish", callback_data="fb_anon")],
         [InlineKeyboardButton(text="👤 Ismim bilan yuborish", callback_data="fb_named")],
         [InlineKeyboardButton(text="❌ Bekor qilish", callback_data="fb_cancel")],
     ])
-    await cb.message.answer(
+    await msg.answer(
         "💬 Bot haqida fikringizni bildiring.\n\n"
         "Anonim yuborsangiz, sizning ismingiz va akkauntingiz egasiga ko'rsatilmaydi. "
         "Qanday yuborasiz?",
@@ -304,7 +331,7 @@ async def fb_choice(cb: CallbackQuery):
     await cb.answer()
     how = "anonim" if cb.data == "fb_anon" else "ismingiz bilan"
     try:
-        await cb.message.edit_text(f"✍️ Fikringizni bitta xabar qilib yozing ({how} yuboriladi).\nBekor qilish uchun /menu ni bosing.")
+        await cb.message.edit_text(f"✍️ Fikringizni bitta xabar qilib yozing ({how} yuboriladi).\nBekor qilish uchun pastdagi tugmalardan birini bosing.")
     except Exception:
         pass
 
@@ -400,13 +427,6 @@ async def main():
     app = web.Application(middlewares=[cors_mw])
     app.router.add_get("/", health)
     app.router.add_route("*", "/api/check", api_check)
-    try:
-        await bot.set_my_commands([
-            BotCommand(command="start", description="Boshlash"),
-            BotCommand(command="menu", description="Menyu"),
-        ])
-    except Exception as e:
-        print("Buyruqlar xatosi:", e)
     runner = web.AppRunner(app)
     await runner.setup()
     await web.TCPSite(runner, "0.0.0.0", int(os.environ.get("PORT", 8080))).start()
