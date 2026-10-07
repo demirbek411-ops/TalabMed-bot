@@ -59,12 +59,18 @@ BTN_ABOUT = "ℹ️ Bot haqida"
 BTN_CHANNELS = "📢 Kanallar"
 BTN_CONTACT = "📞 Aloqa"
 BTN_FEEDBACK = "💬 Fikr bildirish"
+BTN_ORALIQ = "📝 Oraliqlar"
+BTN_BACK = "⬅️ Orqaga"
+
+ORALIQ_PREFIX = "oraliq_"      # PDF fayl nomi shu so'z bilan boshlanishi kerak
+FILE_PREFIX = "📄 "
 
 MENU = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text=BTN_APP), KeyboardButton(text=BTN_BOOKS)],
         [KeyboardButton(text=BTN_ABOUT), KeyboardButton(text=BTN_CHANNELS)],
         [KeyboardButton(text=BTN_CONTACT), KeyboardButton(text=BTN_FEEDBACK)],
+        [KeyboardButton(text=BTN_ORALIQ)],
     ],
     resize_keyboard=True,
     one_time_keyboard=True,
@@ -314,6 +320,66 @@ async def btn_feedback(msg: Message):
         "Qanday yuborasiz?",
         reply_markup=kb,
     )
+
+
+# ---------- Oraliqlar (PDF fayllar) ----------
+
+file_cache = {}   # fayl yo'li -> Telegram file_id (qayta yuklamaslik uchun)
+
+
+def oraliq_files():
+    """Repodagi oraliq_*.pdf fayllarini topadi: {tugma nomi: fayl yo'li}"""
+    base = os.path.dirname(os.path.abspath(__file__))
+    result = {}
+    try:
+        names = sorted(os.listdir(base))
+    except Exception:
+        return result
+    for fn in names:
+        if fn.lower().startswith(ORALIQ_PREFIX) and fn.lower().endswith(".pdf"):
+            title = fn[len(ORALIQ_PREFIX):-4].replace("_", " ").strip()
+            if title:
+                result[FILE_PREFIX + title] = os.path.join(base, fn)
+    return result
+
+
+@dp.message(F.text == BTN_ORALIQ)
+async def btn_oraliq(msg: Message):
+    feedback_mode.pop(msg.from_user.id, None)
+    files = oraliq_files()
+    if not files:
+        await msg.answer("📝 Oraliq fayllari hozircha yuklanmagan. Tez orada qo'shiladi!")
+        return
+    rows = [[KeyboardButton(text=t)] for t in files]
+    rows.append([KeyboardButton(text=BTN_BACK)])
+    kb = ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True, one_time_keyboard=True)
+    await msg.answer("📝 Oraliqlar. Fanni tanlang:", reply_markup=kb)
+
+
+@dp.message(F.text == BTN_BACK)
+async def btn_back(msg: Message):
+    feedback_mode.pop(msg.from_user.id, None)
+    await msg.answer("📋 Asosiy menyu", reply_markup=MENU)
+
+
+@dp.message(F.text.startswith(FILE_PREFIX))
+async def btn_oraliq_file(msg: Message):
+    feedback_mode.pop(msg.from_user.id, None)
+    if await need_subscribe(msg):
+        return
+    path = oraliq_files().get(msg.text)
+    if not path:
+        await msg.answer("Bu fayl topilmadi. /menu ni bosib qayta urinib ko'ring.")
+        return
+    caption = "📝 " + msg.text[len(FILE_PREFIX):] + " (oraliq)\n\nTALABA MED"
+    try:
+        fid = file_cache.get(path)
+        sent = await msg.answer_document(fid or FSInputFile(path), caption=caption, reply_markup=MENU)
+        if not fid and sent.document:
+            file_cache[path] = sent.document.file_id
+    except Exception as e:
+        print("PDF yuborishda xato:", e)
+        await msg.answer("Faylni yuborib bo'lmadi. Keyinroq urinib ko'ring.")
 
 
 @dp.callback_query(F.data.in_({"fb_anon", "fb_named", "fb_cancel"}))
