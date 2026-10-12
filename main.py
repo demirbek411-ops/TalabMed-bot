@@ -13,7 +13,7 @@ from aiogram.filters import CommandStart, Command
 from aiogram.types import (
     Message, CallbackQuery, FSInputFile,
     InlineKeyboardMarkup, InlineKeyboardButton,
-    ReplyKeyboardMarkup, KeyboardButton,
+    ReplyKeyboardMarkup, KeyboardButton, ChatMemberUpdated,
     WebAppInfo, MenuButtonWebApp,
 )
 
@@ -27,8 +27,7 @@ SUPABASE_KEY = "".join(os.environ.get("SUPABASE_KEY", "").split())
 ADMIN_ID = int(os.environ.get("ADMIN_ID", "0") or 0)
 TZ = timezone(timedelta(hours=5))  # Toshkent vaqti
 
-# Kitoblar saytining havolasi (https://...). Bo'sh bo'lsa "tez orada" deb yoziladi.
-BOOKS_URL = ""
+SCHEDULE_URL = "https://demirbek411-ops.github.io/Dars-jadvali-/"
 
 CONTACT = "@Demirbek_17_09"
 
@@ -54,7 +53,7 @@ ABOUT_TEXT = (
 )
 
 BTN_APP = "🌐 Ilovani ochish"
-BTN_BOOKS = "📚 Kitoblar"
+BTN_SCHEDULE = "🗓 Dars jadvali"
 BTN_ABOUT = "ℹ️ Bot haqida"
 BTN_CHANNELS = "📢 Kanallar"
 BTN_CONTACT = "📞 Aloqa"
@@ -67,13 +66,12 @@ FILE_PREFIX = "📄 "
 
 MENU = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text=BTN_APP), KeyboardButton(text=BTN_BOOKS)],
+        [KeyboardButton(text=BTN_APP), KeyboardButton(text=BTN_SCHEDULE)],
         [KeyboardButton(text=BTN_ABOUT), KeyboardButton(text=BTN_CHANNELS)],
         [KeyboardButton(text=BTN_CONTACT), KeyboardButton(text=BTN_FEEDBACK)],
         [KeyboardButton(text=BTN_ORALIQ)],
     ],
     resize_keyboard=True,
-    one_time_keyboard=True,
 )
 
 feedback_mode = {}   # user_id -> "anon" | "named" | "choose"
@@ -148,7 +146,7 @@ def db_headers(extra=None):
     return h
 
 
-async def save_user(user_id, first_name, username):
+async def save_user(user_id, first_name, username, is_member=None):
     if not SUPABASE_URL or not SUPABASE_KEY:
         return
     row = {
@@ -157,6 +155,9 @@ async def save_user(user_id, first_name, username):
         "username": username,
         "last_seen": datetime.now(timezone.utc).isoformat(),
     }
+    if is_member is not None:
+        row["is_member"] = is_member
+        row["left_at"] = None if is_member else datetime.now(timezone.utc).isoformat()
     try:
         async with aiohttp.ClientSession() as s:
             async with s.post(
@@ -171,8 +172,8 @@ async def save_user(user_id, first_name, username):
         print("DB xatosi:", e)
 
 
-async def db_count(column=None, since=None):
-    url = f"{SUPABASE_URL}/rest/v1/bot_users?select=user_id"
+async def db_count(column=None, since=None, extra=""):
+    url = f"{SUPABASE_URL}/rest/v1/bot_users?select=user_id{extra}"
     if column and since:
         url += f"&{column}=gte." + quote(since.isoformat(), safe="")
     async with aiohttp.ClientSession() as s:
@@ -182,6 +183,116 @@ async def db_count(column=None, since=None):
             timeout=aiohttp.ClientTimeout(total=15),
         ) as r:
             return int(r.headers.get("Content-Range", "*/0").split("/")[-1])
+
+
+# ---------- Obunadan chiqqanlarni aniqlash ----------
+
+async def get_flag(user_id):
+    """Bazadagi is_member qiymati: True / False / None (noma'lum)."""
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return None
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.get(
+                f"{SUPABASE_URL}/rest/v1/bot_users?select=is_member&user_id=eq.{user_id}",
+                headers=db_headers(),
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as r:
+                data = await r.json()
+                if data:
+                    return data[0].get("is_member")
+    except Exception as e:
+        print("get_flag xatosi:", e)
+    return None
+
+
+async def patch_user(user_id, fields):
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.patch(
+                f"{SUPABASE_URL}/rest/v1/bot_users?user_id=eq.{user_id}",
+                headers=db_headers({"Prefer": "return=minimal"}),
+                json=fields,
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as r:
+                if r.status >= 300:
+                    print("DB patch xato:", r.status, await r.text())
+    except Exception as e:
+        print("patch_user xatosi:", e)
+
+
+async def warn_left(user_id, left):
+    names = ", ".join(n for n, _ in left)
+    try:
+        await bot.send_message(
+            user_id,
+            "⚠️ Siz quyidagilardan chiqib ketdingiz:\n" + names + "\n\n"
+            "Shu sababli ilova va yangi fayllardan foydalanish yopildi. "
+            "Davom etish uchun qayta obuna bo'ling va «Tekshirish» tugmasini bosing:",
+            reply_markup=sub_keyboard(left),
+        )
+    except Exception as e:
+        print("Ogohlantirish yuborilmadi:", user_id, e)
+
+
+async def recheck_user(user_id, flag):
+    """Obunani qayta tekshiradi, bazani yangilaydi, chiqib ketgan bo'lsa ogohlantiradi."""
+    left = await not_subscribed(user_id)
+    now = not left
+    if flag is not now:
+        await patch_user(user_id, {
+            "is_member": now,
+            "left_at": None if now else datetime.now(timezone.utc).isoformat(),
+        })
+    if flag is True and not now:
+        await warn_left(user_id, left)
+
+
+@dp.chat_member()
+async def on_member_change(ev: ChatMemberUpdated):
+    uname = ("@" + (ev.chat.username or "")).lower()
+    if uname not in [u.lower() for _, u in CHANNELS]:
+        return
+    old, new = ev.old_chat_member.status, ev.new_chat_member.status
+    if new in ("left", "kicked") and old not in ("left", "kicked"):
+        uid = ev.new_chat_member.user.id
+        flag = await get_flag(uid)
+        await recheck_user(uid, flag)
+
+
+async def sweep_once():
+    """Bazadagi hammani aylanib chiqadi (har birini ~0.2 soniyada)."""
+    offset = 0
+    while True:
+        async with aiohttp.ClientSession() as s:
+            async with s.get(
+                f"{SUPABASE_URL}/rest/v1/bot_users?select=user_id,is_member&order=user_id.asc&limit=500&offset={offset}",
+                headers=db_headers(),
+                timeout=aiohttp.ClientTimeout(total=30),
+            ) as r:
+                rows = await r.json()
+        if not rows:
+            break
+        for row in rows:
+            try:
+                await recheck_user(row["user_id"], row.get("is_member"))
+            except Exception as e:
+                print("sweep xatosi:", e)
+            await asyncio.sleep(0.2)
+        offset += 500
+
+
+async def sweep_loop():
+    await asyncio.sleep(300)
+    while True:
+        if SUPABASE_URL and SUPABASE_KEY:
+            try:
+                await sweep_once()
+            except Exception as e:
+                print("sweep_once xatosi:", e)
+        await asyncio.sleep(6 * 3600)
 
 
 @dp.message(Command("stats"))
@@ -199,12 +310,16 @@ async def stats(msg: Message):
         new_today = await db_count("first_seen", today)
         active_today = await db_count("last_seen", today)
         new_week = await db_count("first_seen", week)
+        members = await db_count(extra="&is_member=eq.true")
+        left_n = await db_count(extra="&is_member=eq.false")
         await msg.answer(
             "📊 Statistika\n\n"
             f"👥 Jami foydalanuvchi: {total}\n"
             f"🆕 Bugun yangi: {new_today}\n"
             f"🔥 Bugun faol: {active_today}\n"
-            f"📅 Oxirgi 7 kunda yangi: {new_week}"
+            f"📅 Oxirgi 7 kunda yangi: {new_week}\n\n"
+            f"✅ Hozir obunada: {members}\n"
+            f"🚪 Obunasiz (chiqib ketgan yoki hali obuna bo'lmagan): {left_n}"
         )
     except Exception as e:
         print("stats xatosi:", e)
@@ -214,8 +329,8 @@ async def stats(msg: Message):
 @dp.message(CommandStart())
 async def start(msg: Message):
     feedback_mode.pop(msg.from_user.id, None)
-    await save_user(msg.from_user.id, msg.from_user.first_name, msg.from_user.username)
     left = await not_subscribed(msg.from_user.id)
+    await save_user(msg.from_user.id, msg.from_user.first_name, msg.from_user.username, not left)
     if left:
         await msg.answer(
             "Botdan foydalanish uchun quyidagilarga obuna bo'ling, "
@@ -229,7 +344,7 @@ async def start(msg: Message):
 @dp.message(Command("menu"))
 async def menu_cmd(msg: Message):
     feedback_mode.pop(msg.from_user.id, None)
-    await msg.answer("Menyu pastda. Uni ochish uchun yozuv maydonidagi ▦ tugmasini bosing.", reply_markup=MENU)
+    await msg.answer("📋 Menyu pastda. Yopish uchun telefondagi orqaga tugmasini yoki ▦ ni bosing.", reply_markup=MENU)
 
 
 @dp.callback_query(F.data == "check")
@@ -243,6 +358,7 @@ async def check(cb: CallbackQuery):
             pass
     else:
         await cb.answer()
+        await save_user(cb.from_user.id, cb.from_user.first_name, cb.from_user.username, True)
         try:
             await cb.message.delete()
         except Exception:
@@ -272,16 +388,13 @@ async def btn_app(msg: Message):
     await msg.answer("Ilovani ochish uchun tugmani bosing.", reply_markup=app_keyboard(SITE_URL))
 
 
-@dp.message(F.text == BTN_BOOKS)
-async def btn_books(msg: Message):
+@dp.message(F.text == BTN_SCHEDULE)
+async def btn_schedule(msg: Message):
     feedback_mode.pop(msg.from_user.id, None)
     if await need_subscribe(msg):
         return
-    if not BOOKS_URL:
-        await msg.answer("📚 Kitoblar bo'limi tez orada ochiladi. Kuzatib boring!")
-        return
-    await msg.answer("Kitoblar sahifasini ochish uchun tugmani bosing.",
-                     reply_markup=app_keyboard(BOOKS_URL, "📚 Kitoblarni ochish"))
+    await msg.answer("🗓 Dars jadvalini ochish uchun tugmani bosing.",
+                     reply_markup=app_keyboard(SCHEDULE_URL, "🗓 Dars jadvalini ochish"))
 
 
 @dp.message(F.text == BTN_ABOUT)
@@ -324,7 +437,7 @@ async def btn_feedback(msg: Message):
 
 # ---------- Oraliqlar (PDF fayllar) ----------
 
-file_cache = {}   # fayl yo'li -> Telegram file_id (qayta yuklamaslik uchun)
+file_cache = {}   # fayl nomi -> Telegram file_id (qayta yuklamaslik uchun)
 
 
 def oraliq_files():
@@ -352,7 +465,7 @@ async def btn_oraliq(msg: Message):
         return
     rows = [[KeyboardButton(text=t)] for t in files]
     rows.append([KeyboardButton(text=BTN_BACK)])
-    kb = ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True, one_time_keyboard=True)
+    kb = ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
     await msg.answer("📝 Oraliqlar. Fanni tanlang:", reply_markup=kb)
 
 
@@ -374,7 +487,7 @@ async def btn_oraliq_file(msg: Message):
     caption = "📝 " + msg.text[len(FILE_PREFIX):] + " (oraliq)\n\nTALABA MED"
     try:
         fid = file_cache.get(path)
-        sent = await msg.answer_document(fid or FSInputFile(path), caption=caption, reply_markup=MENU)
+        sent = await msg.answer_document(fid or FSInputFile(path), caption=caption, reply_markup=MENU, protect_content=True)
         if not fid and sent.document:
             file_cache[path] = sent.document.file_id
     except Exception as e:
@@ -479,8 +592,8 @@ async def api_check(request):
     user = user_from_init_data(body.get("initData", ""))
     if not user:
         return web.json_response({"ok": False, "error": "invalid"}, status=403)
-    await save_user(user["id"], user.get("first_name"), user.get("username"))
     left = await not_subscribed(user["id"])
+    await save_user(user["id"], user.get("first_name"), user.get("username"), not left)
     missing = [{"name": n, "url": f"https://t.me/{u[1:]}"} for n, u in left]
     return web.json_response({"ok": not left, "missing": missing})
 
@@ -496,7 +609,8 @@ async def main():
     runner = web.AppRunner(app)
     await runner.setup()
     await web.TCPSite(runner, "0.0.0.0", int(os.environ.get("PORT", 8080))).start()
-    await dp.start_polling(bot)
+    asyncio.create_task(sweep_loop())
+    await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
 
 
 asyncio.run(main())
