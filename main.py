@@ -238,7 +238,8 @@ async def warn_left(user_id, left):
 
 
 async def recheck_user(user_id, flag):
-    """Obunani qayta tekshiradi, bazani yangilaydi, chiqib ketgan bo'lsa ogohlantiradi."""
+    """Obunani qayta tekshiradi, bazani yangilaydi, chiqib ketgan bo'lsa ogohlantiradi.
+    Ogohlantirish yuborilgan bo'lsa True qaytaradi."""
     left = await not_subscribed(user_id)
     now = not left
     if flag is not now:
@@ -248,6 +249,8 @@ async def recheck_user(user_id, flag):
         })
     if flag is True and not now:
         await warn_left(user_id, left)
+        return True
+    return False
 
 
 @dp.chat_member()
@@ -256,6 +259,7 @@ async def on_member_change(ev: ChatMemberUpdated):
     if uname not in [u.lower() for _, u in CHANNELS]:
         return
     old, new = ev.old_chat_member.status, ev.new_chat_member.status
+    print(f"chat_member: {uname} {ev.new_chat_member.user.id} {old} -> {new}")
     if new in ("left", "kicked") and old not in ("left", "kicked"):
         uid = ev.new_chat_member.user.id
         flag = await get_flag(uid)
@@ -263,8 +267,10 @@ async def on_member_change(ev: ChatMemberUpdated):
 
 
 async def sweep_once():
-    """Bazadagi hammani aylanib chiqadi (har birini ~0.2 soniyada)."""
+    """Bazadagi hammani aylanib chiqadi. (tekshirilgan, ogohlantirilgan) sonini qaytaradi."""
     offset = 0
+    checked = 0
+    warned = 0
     while True:
         async with aiohttp.ClientSession() as s:
             async with s.get(
@@ -277,22 +283,45 @@ async def sweep_once():
             break
         for row in rows:
             try:
-                await recheck_user(row["user_id"], row.get("is_member"))
+                if await recheck_user(row["user_id"], row.get("is_member")):
+                    warned += 1
+                checked += 1
             except Exception as e:
                 print("sweep xatosi:", e)
             await asyncio.sleep(0.2)
         offset += 500
+    print(f"sweep tugadi: tekshirildi={checked}, ogohlantirildi={warned}")
+    return checked, warned
+
+
+SWEEP_EVERY = 3600   # soniya: har soatda hammani tekshiradi
 
 
 async def sweep_loop():
-    await asyncio.sleep(300)
+    await asyncio.sleep(120)
     while True:
         if SUPABASE_URL and SUPABASE_KEY:
             try:
                 await sweep_once()
             except Exception as e:
                 print("sweep_once xatosi:", e)
-        await asyncio.sleep(6 * 3600)
+        await asyncio.sleep(SWEEP_EVERY)
+
+
+@dp.message(Command("sweep"))
+async def sweep_cmd(msg: Message):
+    if msg.from_user.id != ADMIN_ID:
+        return
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        await msg.answer("Baza ulanmagan (SUPABASE_URL / SUPABASE_KEY yo'q).")
+        return
+    await msg.answer("⏳ Hammani tekshiryapman, biroz kuting...")
+    try:
+        checked, warned = await sweep_once()
+        await msg.answer(f"✅ Tekshirildi: {checked} ta foydalanuvchi.\n⚠️ Ogohlantirish yuborildi: {warned} ta.")
+    except Exception as e:
+        print("sweep_cmd xatosi:", e)
+        await msg.answer("Tekshirishda xatolik. Render Logs ni ko'ring.")
 
 
 @dp.message(Command("stats"))
