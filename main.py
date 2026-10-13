@@ -62,6 +62,7 @@ BTN_FEEDBACK = "💬 Fikr bildirish"
 BTN_ORALIQ = "📝 Oraliqlar"
 BTN_BACK = "⬅️ Orqaga"
 BTN_STREAK = "🔥 Seriyam"
+BTN_QOTD = "🧠 Kunning savoli"
 
 ORALIQ_PREFIX = "oraliq_"      # PDF fayl nomi shu so'z bilan boshlanishi kerak
 FILE_PREFIX = "📄 "
@@ -72,6 +73,7 @@ MENU = ReplyKeyboardMarkup(
         [KeyboardButton(text=BTN_ABOUT), KeyboardButton(text=BTN_CHANNELS)],
         [KeyboardButton(text=BTN_CONTACT), KeyboardButton(text=BTN_FEEDBACK)],
         [KeyboardButton(text=BTN_ORALIQ), KeyboardButton(text=BTN_STREAK)],
+        [KeyboardButton(text=BTN_QOTD)],
     ],
     resize_keyboard=True,
 )
@@ -84,6 +86,11 @@ CHANNELS = [
     ("📚 MedEdu", "@MedEdu_uz"),
     ("💬 Talaba Med dars (guruh)", "@talabamed_dars"),
 ]
+
+# Majburiy emas, faqat tavsiya: kanallar ro'yxati ustidagi matnga qo'shiladi
+OPTIONAL_CHANNEL_NOTE = (
+    "ℹ️ Adminlarimizdan birining kanali: https://t.me/Edits_foto (qo'shilish ixtiyoriy)"
+)
 
 bot = Bot(TOKEN)
 dp = Dispatcher()
@@ -371,7 +378,7 @@ async def start(msg: Message):
     if left:
         await msg.answer(
             "Botdan foydalanish uchun quyidagilarga obuna bo'ling, "
-            "so'ng «Tekshirish» tugmasini bosing:",
+            "so'ng «Tekshirish» tugmasini bosing:\n\n" + OPTIONAL_CHANNEL_NOTE,
             reply_markup=sub_keyboard(left),
         )
     else:
@@ -410,7 +417,8 @@ async def need_subscribe(msg: Message):
     left = await not_subscribed(msg.from_user.id)
     if left:
         await msg.answer(
-            "Avval quyidagilarga obuna bo'ling, so'ng «Tekshirish» tugmasini bosing:",
+            "Avval quyidagilarga obuna bo'ling, so'ng «Tekshirish» tugmasini bosing:\n\n"
+            + OPTIONAL_CHANNEL_NOTE,
             reply_markup=sub_keyboard(left),
         )
         return True
@@ -444,7 +452,10 @@ async def btn_about(msg: Message):
 async def btn_channels(msg: Message):
     feedback_mode.pop(msg.from_user.id, None)
     rows = [[InlineKeyboardButton(text=n, url=f"https://t.me/{u[1:]}")] for n, u in CHANNELS]
-    await msg.answer("📢 Bizning kanal va guruhlar:", reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+    await msg.answer(
+        "📢 Bizning kanal va guruhlar:\n\n" + OPTIONAL_CHANNEL_NOTE,
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+    )
 
 
 @dp.message(F.text == BTN_CONTACT)
@@ -640,6 +651,257 @@ async def btn_streak(msg: Message):
         streak_text(streak_view(row)),
         reply_markup=app_keyboard(SITE_URL, "🌐 Test yechish"),
     )
+
+
+# ---------- Kunning savoli (A/B/C/D tugmalar, javoblar hisobi, izoh) ----------
+
+QOTD_HOUR = 8   # har kuni soat nechada yuboriladi (Toshkent vaqti)
+LETTERS = "ABCDEFGH"
+
+
+def _load_qotd():
+    base = os.path.dirname(os.path.abspath(__file__))
+    try:
+        with open(os.path.join(base, "questions.json"), encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception as e:
+        print("questions.json yuklanmadi:", e)
+        return {}, {}, [], [], {"start": None, "order": [], "items": {}}
+    by_hash = {x["h"]: x for x in data["q"]}
+    try:
+        with open(os.path.join(base, "explanations.json"), encoding="utf-8") as f:
+            expl = json.load(f)
+    except Exception as e:
+        print("explanations.json yuklanmadi:", e)
+        expl = {"start": None, "order": [], "items": {}}
+    curated = [h for h in expl.get("order", []) if h in by_hash]
+    used = set(curated)
+    rest = [x["h"] for x in data["q"] if x["h"] not in used and len(set(x["o"])) == len(x["o"])]
+    random.Random(20261013).shuffle(rest)
+    return data["titles"], by_hash, curated, rest, expl
+
+
+QOTD_TITLES, QOTD_QUESTIONS, QOTD_CURATED, QOTD_REST, QOTD_EXPL = _load_qotd()
+
+
+def qotd_day():
+    """Savol kuni soat 08:00 da almashadi (Toshkent)."""
+    return (datetime.now(TZ) - timedelta(hours=QOTD_HOUR)).date().toordinal()
+
+
+def qotd_for(day):
+    """Berilgan kun uchun savol: hamma uchun bir xil, variantlar kunga qarab aralashtiriladi."""
+    start = None
+    if QOTD_EXPL.get("start"):
+        try:
+            start = datetime.fromisoformat(QOTD_EXPL["start"]).date().toordinal()
+        except Exception:
+            start = None
+    if start is not None and 0 <= day - start < len(QOTD_CURATED):
+        h = QOTD_CURATED[day - start]
+    else:
+        h = QOTD_REST[day % len(QOTD_REST)]
+    item = QOTD_QUESTIONS[h]
+    order = list(range(len(item["o"])))
+    random.Random(day).shuffle(order)          # order[pos] = asl variant raqami
+    return {
+        "day": day,
+        "h": h,
+        "q": item["q"],
+        "opts": [item["o"][i] for i in order],
+        "orig": order,
+        "correct": order.index(item["c"]),
+        "src": QOTD_TITLES.get(item["k"], ""),
+    }
+
+
+def qotd_head(p):
+    return ["🧠 Kunning savoli", f"📚 {p['src']}", "", p["q"], ""]
+
+
+def qotd_question_text(p):
+    lines = qotd_head(p)
+    for i, o in enumerate(p["opts"]):
+        lines.append(f"{LETTERS[i]}) {o}")
+    lines += ["", "Javobni tanlang 👇"]
+    return "\n".join(lines)
+
+
+def qotd_keyboard(p):
+    row = [
+        InlineKeyboardButton(text=LETTERS[i], callback_data=f"qa:{p['day']}:{i}")
+        for i in range(len(p["opts"]))
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=[row])
+
+
+def qotd_result_text(p, my_pos, counts):
+    total = sum(counts)
+    lines = qotd_head(p)
+    for i, o in enumerate(p["opts"]):
+        pct = round(counts[i] * 100 / total) if total else 0
+        mark = "✅ " if i == p["correct"] else ""
+        you = "  ← siz" if i == my_pos else ""
+        lines.append(f"{LETTERS[i]}) {mark}{o}")
+        lines.append(f"      {pct}% ({counts[i]}){you}")
+    lines += ["", f"Jami {total} kishi javob berdi", ""]
+    right = LETTERS[p["correct"]]
+    if my_pos == p["correct"]:
+        lines.append("✅ To'g'ri!")
+    else:
+        lines.append(f"❌ Xato. To'g'ri javob: {right}) {p['opts'][p['correct']]}")
+    ex = QOTD_EXPL.get("items", {}).get(p["h"])
+    if ex:
+        if my_pos != p["correct"]:
+            w = ex.get("wrong", {}).get(str(p["orig"][my_pos]))
+            if w:
+                lines += ["", f"❌ Nega xato: {w}"]
+        lines += ["", f"💡 Nega to'g'ri: {ex['why']}", "", "ℹ️ Izoh qo'shimcha tushuntirish uchun, asosiy manba — darslik."]
+    else:
+        lines += ["", "Bu savol uchun izoh hali qo'shilmagan."]
+    return "\n".join(lines)
+
+
+async def vote_insert(day, uid, option):
+    """True = yangi javob yozildi, False = oldin javob bergan, None = xato."""
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.post(
+                f"{SUPABASE_URL}/rest/v1/qotd_votes?on_conflict=day,user_id",
+                headers=db_headers({"Prefer": "resolution=ignore-duplicates,return=representation"}),
+                json={"day": day, "user_id": uid, "option": option},
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as r:
+                if r.status >= 300:
+                    print("vote_insert xato:", r.status, await r.text())
+                    return None
+                return bool(await r.json())
+    except Exception as e:
+        print("vote_insert xatosi:", e)
+        return None
+
+
+async def vote_get(day, uid):
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.get(
+                f"{SUPABASE_URL}/rest/v1/qotd_votes?select=option&day=eq.{day}&user_id=eq.{uid}",
+                headers=db_headers(),
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as r:
+                if r.status >= 300:
+                    return None
+                rows = await r.json()
+                return rows[0]["option"] if rows else None
+    except Exception as e:
+        print("vote_get xatosi:", e)
+        return None
+
+
+async def _vote_count(day, option):
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.get(
+                f"{SUPABASE_URL}/rest/v1/qotd_votes?select=user_id&day=eq.{day}&option=eq.{option}&limit=1",
+                headers=db_headers({"Prefer": "count=exact"}),
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as r:
+                if r.status >= 300:
+                    return 0
+                return int(r.headers.get("Content-Range", "*/0").split("/")[-1])
+    except Exception as e:
+        print("vote_count xatosi:", e)
+        return 0
+
+
+async def vote_counts(day, n):
+    return list(await asyncio.gather(*[_vote_count(day, i) for i in range(n)]))
+
+
+async def qotd_send(user_id):
+    if not QOTD_QUESTIONS or not QOTD_REST:
+        return False
+    p = qotd_for(qotd_day())
+    await bot.send_message(user_id, qotd_question_text(p), reply_markup=qotd_keyboard(p))
+    return True
+
+
+@dp.callback_query(F.data.startswith("qa:"))
+async def on_qotd_answer(cb: CallbackQuery):
+    try:
+        _, d, pos = cb.data.split(":")
+        d, pos = int(d), int(pos)
+    except Exception:
+        await cb.answer()
+        return
+    if d != qotd_day():
+        await cb.answer("Bu savol eskirgan. Yangi savol har kuni soat 08:00 da keladi.", show_alert=True)
+        try:
+            await cb.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+        return
+    p = qotd_for(d)
+    if pos < 0 or pos >= len(p["opts"]):
+        await cb.answer()
+        return
+    uid = cb.from_user.id
+    inserted = await vote_insert(d, uid, pos)
+    if inserted is None:
+        await cb.answer("Javobni hozir saqlab bo'lmadi. Qayta urinib ko'ring.", show_alert=True)
+        return
+    my_pos = pos
+    if not inserted:
+        prev = await vote_get(d, uid)
+        if prev is not None:
+            my_pos = prev
+    counts = await vote_counts(d, len(p["opts"]))
+    try:
+        await cb.message.edit_text(qotd_result_text(p, my_pos, counts), reply_markup=None)
+    except Exception as e:
+        print("qotd edit xatosi:", e)
+    await cb.answer("✅ To'g'ri!" if my_pos == p["correct"] else "❌ Xato")
+    if inserted:
+        v = await streak_add(uid, 1)
+        if v and v.get("just_completed") and v.get("message"):
+            try:
+                await bot.send_message(uid, v["message"])
+            except Exception as e:
+                print("Seriya xabari yuborilmadi:", uid, e)
+
+
+@dp.message(F.text == BTN_QOTD)
+async def btn_qotd(msg: Message):
+    feedback_mode.pop(msg.from_user.id, None)
+    if not QOTD_QUESTIONS or not QOTD_REST:
+        await msg.answer("Savol hozircha tayyor emas. Keyinroq urinib ko'ring.")
+        return
+    day = qotd_day()
+    prev = await vote_get(day, msg.from_user.id)
+    if prev is not None:
+        p = qotd_for(day)
+        counts = await vote_counts(day, len(p["opts"]))
+        await msg.answer(qotd_result_text(p, prev, counts))
+        return
+    try:
+        await qotd_send(msg.from_user.id)
+    except Exception as e:
+        print("qotd_send xatosi:", e)
+        await msg.answer("Savol hozircha tayyor emas. Keyinroq urinib ko'ring.")
+
+
+@dp.message(Command("qotd"))
+async def cmd_qotd(msg: Message):
+    """Admin uchun: bugungi savolni faqat o'zingizga yuboradi (sinash)."""
+    if msg.from_user.id != ADMIN_ID:
+        return
+    try:
+        ok = await qotd_send(msg.from_user.id)
+    except Exception as e:
+        await msg.answer(f"Xato: {e}")
+        return
+    if not ok:
+        await msg.answer("questions.json yuklanmagan (faylni repozitoriyga qo'shing).")
 
 
 # ---------- Oraliqlar (PDF fayllar) ----------
@@ -887,6 +1149,45 @@ async def streak_reminder_loop():
             print("streak eslatma xatosi:", e)
 
 
+async def qotd_users():
+    ids, offset = [], 0
+    while True:
+        async with aiohttp.ClientSession() as s:
+            async with s.get(
+                f"{SUPABASE_URL}/rest/v1/bot_users?select=user_id&is_member=eq.true"
+                f"&order=user_id.asc&limit=1000&offset={offset}",
+                headers=db_headers(),
+                timeout=aiohttp.ClientTimeout(total=30),
+            ) as r:
+                rows = await r.json() if r.status < 300 else []
+        ids += [x["user_id"] for x in rows]
+        if len(rows) < 1000:
+            break
+        offset += 1000
+    return ids
+
+
+async def qotd_loop():
+    """Har kuni 08:00 (Toshkent) da obunadagi hammaga kunning savolini yuboradi."""
+    while True:
+        now = datetime.now(TZ)
+        nxt = now.replace(hour=QOTD_HOUR, minute=0, second=0, microsecond=0)
+        if nxt <= now:
+            nxt += timedelta(days=1)
+        await asyncio.sleep((nxt - now).total_seconds())
+        if not SUPABASE_URL or not SUPABASE_KEY or not QOTD_QUESTIONS:
+            continue
+        try:
+            for uid in await qotd_users():
+                try:
+                    await qotd_send(uid)
+                except Exception as e:
+                    print("Kunning savoli yuborilmadi:", uid, e)
+                await asyncio.sleep(0.06)
+        except Exception as e:
+            print("qotd_loop xatosi:", e)
+
+
 async def health(request):
     return web.Response(text="OK")
 
@@ -902,6 +1203,7 @@ async def main():
     await web.TCPSite(runner, "0.0.0.0", int(os.environ.get("PORT", 8080))).start()
     asyncio.create_task(sweep_loop())
     asyncio.create_task(streak_reminder_loop())
+    asyncio.create_task(qotd_loop())
     await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
 
 
