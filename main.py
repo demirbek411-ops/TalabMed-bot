@@ -1226,33 +1226,111 @@ async def _streak_user(request):
     return user, body, None
 
 
+DAILY_CAP = 600          # kuniga reyting/seriyaga hisoblanadigan maksimal javoblar soni (yechish cheklanmaydi)
+VERIFY_MAX_ITEMS = 60    # bitta so'rovdagi javoblar chegarasi
+
+
+def _norm(t):
+    return " ".join(str(t).split())
+
+
+def _h(t, n):
+    return hashlib.sha1(_norm(t).encode("utf-8")).hexdigest()[:n]
+
+
+def _load_bank():
+    try:
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bank.json")
+        with open(path, encoding="utf-8") as f:
+            return {k: set(v) for k, v in json.load(f)["q"].items()}
+    except Exception as e:
+        print("bank.json yuklanmadi:", e)
+        return {}
+
+
+BANK = _load_bank()   # savol matni xeshi -> to'g'ri javob matni xeshlari
+
+
+async def seen_insert(day, uid, pairs):
+    """Shu kun birinchi marta berilgan javoblarni yozadi va ro'yxatini qaytaradi. Xato bo'lsa None."""
+    rows = [{"day": day, "user_id": uid, "qh": qh, "ok": ok} for qh, ok in pairs]
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.post(
+                f"{SUPABASE_URL}/rest/v1/seen_daily?on_conflict=day,user_id,qh",
+                headers=db_headers({"Prefer": "resolution=ignore-duplicates,return=representation"}),
+                json=rows,
+                timeout=aiohttp.ClientTimeout(total=15),
+            ) as r:
+                if r.status >= 300:
+                    print("seen_insert xato:", r.status, await r.text())
+                    return None
+                return [(x["qh"], x["ok"]) for x in await r.json()]
+    except Exception as e:
+        print("seen_insert xatosi:", e)
+        return None
+
+
 async def api_answer(request):
-    """Sayt har test javobidan keyin chaqiradi: seriya hisobini yangilaydi."""
+    """Sayt javoblarni (savol matni + tanlangan variant matni) yuboradi.
+    To'g'rilikni SERVER o'zining bazasidan tekshiradi; mijoz yuborgan 'to'g'ri' degan da'vo qabul qilinmaydi.
+    Har savol kuniga bir marta hisoblanadi, kuniga DAILY_CAP tagacha."""
     if request.method == "OPTIONS":
         return web.Response()
     user, body, err = await _streak_user(request)
     if err:
         return err
-    try:
-        n = int(body.get("n", 1))
-    except Exception:
-        n = 1
-    n = max(1, min(n, 50))
-    try:
-        c = int(body.get("c", 0))
-    except Exception:
-        c = 0
-    c = max(0, min(c, n))
-    v = await streak_add(user["id"], n)
-    await stats_add(user["id"], user.get("first_name"), n, c)
+    items = body.get("items")
+    if not isinstance(items, list):
+        return web.json_response({"ok": True, "counted": 0, "legacy": True})
+    uid = user["id"]
+
+    seen_req, pairs, unknown = set(), [], 0
+    for it in items[:VERIFY_MAX_ITEMS]:
+        try:
+            qt, at = it["q"], it["a"]
+            if not isinstance(qt, str) or not isinstance(at, str):
+                continue
+        except Exception:
+            continue
+        qh = _h(qt, 12)
+        good = BANK.get(qh)
+        if good is None:
+            unknown += 1
+            continue
+        if qh in seen_req:
+            continue
+        seen_req.add(qh)
+        pairs.append((qh, _h(at, 10) in good))
+
+    row = await streak_get(uid)
+    if row is None:
+        return web.json_response({"ok": False, "error": "db"}, status=500)
+    view = streak_view(row)
+    allowed = max(0, DAILY_CAP - view["today_count"])
+    pairs = pairs[:allowed]
+
+    new = []
+    if pairs:
+        new = await seen_insert(datetime.now(TZ).date().toordinal(), uid, pairs)
+        if new is None:
+            return web.json_response({"ok": False, "error": "db"}, status=500)
+    counted = len(new)
+    correct = sum(1 for _, ok in new if ok)
+    if not counted:
+        view["just_completed"] = False
+        return web.json_response({"ok": True, "counted": 0, "unknown": unknown, "capped": allowed == 0, **view})
+
+    v = await streak_add(uid, counted)
+    await stats_add(uid, user.get("first_name"), counted, correct)
     if v is None:
         return web.json_response({"ok": False, "error": "db"}, status=500)
     if v.get("just_completed") and v.get("message"):
         try:
-            await bot.send_message(user["id"], v["message"])
+            await bot.send_message(uid, v["message"])
         except Exception as e:
-            print("Seriya xabari yuborilmadi:", user["id"], e)
-    return web.json_response({"ok": True, **v})
+            print("Seriya xabari yuborilmadi:", uid, e)
+    return web.json_response({"ok": True, "counted": counted, "correct": correct, "unknown": unknown, **v})
 
 
 async def api_streak(request):
@@ -1278,6 +1356,14 @@ async def streak_reminder_loop():
         await asyncio.sleep((nxt - now).total_seconds())
         if not SUPABASE_URL or not SUPABASE_KEY:
             continue
+        try:   # 2 kundan eski "shu kun javob berilgan savollar" yozuvlarini o'chirish
+            async with aiohttp.ClientSession() as s:
+                await s.delete(
+                    f"{SUPABASE_URL}/rest/v1/seen_daily?day=lt.{datetime.now(TZ).date().toordinal() - 2}",
+                    headers=db_headers(), timeout=aiohttp.ClientTimeout(total=20),
+                )
+        except Exception as e:
+            print("seen_daily tozalash xatosi:", e)
         try:
             async with aiohttp.ClientSession() as s:
                 async with s.get(
