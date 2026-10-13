@@ -1,0 +1,277 @@
+{
+ "start": "2026-10-14",
+ "order": [
+  "cea15cb737",
+  "149b0aa8a5",
+  "e4cbdad2b2",
+  "8c772a23f1",
+  "d99be195e1",
+  "b7ddbb1269",
+  "2507c07134",
+  "ab5807910f",
+  "d2c2f379d3",
+  "40a8003191",
+  "57c5975bcd",
+  "55c149527c",
+  "4d94edc271",
+  "ef93830a42",
+  "7fda726755",
+  "8f0227ad6d",
+  "9a4dd926ff",
+  "15587c7a22",
+  "249d14f42c",
+  "24e2c4b60d",
+  "927805cf5a",
+  "69494676cc",
+  "2b9731a009",
+  "345658ed37",
+  "7f57e59eaf",
+  "66bad9e988",
+  "d0ec3b6f33",
+  "ebbd6cd2e4",
+  "374d5f4c94",
+  "e954e7da54"
+ ],
+ "items": {
+  "40a8003191": {
+   "why": "Qon-havo to'sig'ida epiteliy va endoteliyning bazal membranalari qo'shilib ketadi, shuning uchun to'siq juda yupqa (taxminan 0,5 mkm) bo'ladi. Gazlar (O₂ va CO₂) bosib o'tadigan masofa qisqarib, diffuziya tezlashadi.",
+   "wrong": {
+    "1": "Aksincha, bazal membranalarning yaqinlashishi to'siqni yupqalashtiradi. Qalin to'siq gaz almashinuvini qiyinlashtirardi.",
+    "2": "Bronxial mushaklar bronx va bronxiolalar devorida joylashgan, alveola to'sig'idagi bazal membranalar ularga ta'sir qilmaydi.",
+    "3": "Surfaktantni II tip alveolotsitlar ishlab chiqaradi, uning parchalanishi bazal membranalarning joylashuviga bog'liq emas."
+   }
+  },
+  "4d94edc271": {
+   "why": "Respirator bronxiola devorida alveolalarga o'xshash bo'rtmalar (alveolyar bo'rtmalar) paydo bo'ladi, gaz almashinuvi shu yerdan boshlanadi. Terminal bronxiolada esa alveola bo'lmaydi, u faqat havo o'tkazadi.",
+   "wrong": {
+    "0": "Bronxiola epiteliysi ko'p qavatli yassi emas, bir qavatli kubsimon bo'ladi. Ko'p qavatli yassi epiteliy teri va qizilo'ngach kabi joylarga xos.",
+    "2": "Gialin tog'ay halqalari faqat yirik bronxlarda bor, bronxiolalarda tog'ay umuman bo'lmaydi.",
+    "3": "Bronxiolalarda shilliq osti bezlari yo'q, ular yirikroq bronxlarga xos."
+   }
+  },
+  "ef93830a42": {
+   "why": "Elastik tog'ay moddasida elastik tolalar ko'p, shuning uchun u egiluvchan va shaklini qayta tiklaydi. Yutish paytida hiqildoq usti tog'ayi egilib hiqildoq yo'lini yopadi, keyin o'z holiga qaytadi.",
+   "wrong": {
+    "1": "Qattiq va harakatsiz bo'lish suyakka yoki gialin tog'ayga xos, elastik tog'ay esa egiluvchan.",
+    "2": "Alveolalar o'pkaning gaz almashinuvi bo'limlari, tog'ay ularni hosil qilmaydi.",
+    "3": "Qon ishlab chiqarish qizil suyak iligining vazifasi, tog'ayniki emas."
+   }
+  },
+  "9a4dd926ff": {
+   "why": "Odontoblastlar avval organik matriksni ishlab chiqaradi, u hali ohaklanmagan bo'ladi. Bu qatlam predentin deyiladi va odontoblastlar bilan ohaklangan dentin orasida turadi.",
+   "wrong": {
+    "1": "Nasmit pardasi emal yuzasini qoplagan yupqa parda, dentin bilan odontoblastlar orasida emas.",
+    "2": "Sement tish ildizini tashqaridan qoplaydi, odontoblastlar bilan bevosita aloqasi yo'q.",
+    "3": "Yopqich (mantiya) dentin dentinning eng tashqi, allaqachon ohaklangan qavati."
+   }
+  },
+  "7fda726755": {
+   "why": "Sementning taxminan 70% i anorganik moddalardan (asosan gidroksiapatit), 30% i organik moddalardan (kollagen) iborat. Demak, anorganik komponent ustun.",
+   "wrong": {
+    "0": "30% organik, 70% anorganik bo'lsa, ustun bo'lgani anorganik, organik emas.",
+    "2": "'Faqat mineral' deyish xato: sementda 30% organik modda (kollagen tolalar) bor.",
+    "3": "Organik modda yo'q deyish noto'g'ri: kollagen tolalar sementning organik qismi."
+   }
+  },
+  "927805cf5a": {
+   "why": "Qizilo'ngachning ichki aylana mushak qatlami yuqori qismda (halqum bilan chegarada) va pastki qismda (me'daga o'tish joyida) qalinlashib, ikkita sfinkter hosil qiladi. Ular ovqat o'tishini boshqaradi.",
+   "wrong": {
+    "0": "Limfoid follikullar biriktiruvchi to'qimadagi limfa to'planishlari, mushak qalinlashuvi emas.",
+    "2": "Kardial bezlar shilliq pardadagi bezlar, mushak qatlamidan hosil bo'lmaydi.",
+    "3": "Shilliq plastinka shilliq pardaning bir qismi, aylana mushak qavatining qalinlashuvi bilan bog'liq emas."
+   }
+  },
+  "69494676cc": {
+   "why": "To'g'ri ichakning anal qismida ustunsimon zona shilliq pardasi uzunasiga yo'nalgan burmalar hosil qiladi. Ular anal (anorektal) ustunlar deyiladi, ular orasida anal sinuslar bo'ladi.",
+   "wrong": {
+    "1": "Peyer pilakchalari ingichka ichak (yonbosh ichak) limfoid to'planishlari.",
+    "2": "Pilorik sfinkter me'da bilan o'n ikki barmoqli ichak chegarasida joylashgan.",
+    "3": "Brunner bezlari o'n ikki barmoqli ichak shilliq osti qavatida joylashgan."
+   }
+  },
+  "ab5807910f": {
+   "why": "Oqsil sintezi i-RNK ning ribosomaga birikishidan boshlanadi. Ribosomada aminokislotalar ulanib polipeptid zanjiri hosil bo'ladi, keyin u oqsilga aylanadi.",
+   "wrong": {
+    "1": "Golji va lizosoma sintez qilmaydi: Golji oqsilni o'zgartirib o'raydi, lizosoma parchalaydi. Sintez ribosomada bo'ladi.",
+    "2": "Mitoxondriya energiya beradi, sentrosoma hujayra bo'linishida ishtirok etadi, ular oqsil sintezining bosqichlari emas.",
+    "3": "Peroksisoma va lizosoma moddalarni parchalash bilan bog'liq, sintez zanjirining boshlanishi bo'la olmaydi."
+   }
+  },
+  "55c149527c": {
+   "why": "Buyrak tanachasi kapsulasi ikki varaqdan iborat: tashqi (parietal) va ichki (visceral, podotsitlar bilan). Ular orasidagi bo'shliq kapsula bo'shlig'i bo'lib, birlamchi siydik shu yerga filtrlanadi.",
+   "wrong": {
+    "0": "Endoteliy va bazal membrana filtratsiya to'sig'ining qatlamlari, kapsula bo'shlig'i emas.",
+    "2": "Mezangiy va endoteliy kapillyar to'p ichida joylashgan, kapsula bo'shlig'iga aloqasi yo'q.",
+    "3": "Podotsit va kapillyar lumen orasi filtratsiya to'sig'i. Kapsula bo'shlig'i esa podotsitlar ortida, kapsulaning ikki varag'i orasida."
+   }
+  },
+  "149b0aa8a5": {
+   "why": "Nefrogen to'qimadan avval nefrogen pufakcha hosil bo'ladi, u uzayib S-simon tanaga aylanadi, so'ng undan nefron shakllanadi. Ketma-ketlik: pufakcha → S-simon tana → nefron.",
+   "wrong": {
+    "0": "Bu to'liq emas: shakllanish pufakchadan boshlanadi va S-simon bosqichdan o'tadi.",
+    "1": "S-simon tanadan oldin pufakcha bosqichi bor, undan keyin esa butun nefron shakllanadi, faqat kapsula emas.",
+    "3": "Glomerula (kapillyar to'p) kechroq shakllanadi, ketma-ketlikning boshida emas."
+   }
+  },
+  "57c5975bcd": {
+   "why": "Ayol uretrasining tashqi qismidagi ko'ndalang-targ'il mushak tolalari tashqi sfinkterni hosil qiladi. U ixtiyoriy nazorat ostida siydikni ushlab turadi.",
+   "wrong": {
+    "1": "Shilliq qavatni epiteliy va xususiy plastinka hosil qiladi, mushak tolalari emas.",
+    "2": "Glomerulyar kapillyarlar buyrakda joylashgan, uretraga aloqasi yo'q.",
+    "3": "Adventitsiyani biriktiruvchi to'qima hosil qiladi, ko'ndalang-targ'il mushak emas."
+   }
+  },
+  "b7ddbb1269": {
+   "why": "Urug' pufakchalari Vol'f (mezonefral) nayining pastki qismidan o'sib chiqqan bo'rtmadan rivojlanadi. Vol'f nayi erkaklarda urug' yo'llarining ham manbai.",
+   "wrong": {
+    "0": "Myuller nayidan ayollarda bachadon va bachadon naylari rivojlanadi, erkaklarda u kichrayib ketadi.",
+    "2": "Siydik pufagi epiteliysi urug' pufakchalarini hosil qilmaydi, ular alohida bezlar.",
+    "3": "Rete testis urug'don ichidagi kanalchalar tizimi, urug' pufakchalari esa urug'dondan tashqarida."
+   }
+  },
+  "8c772a23f1": {
+   "why": "Prostata stromasi silliq mushak tutamlari va biriktiruvchi to'qima qatlamlaridan iborat, ular bezni bo'laklarga ajratadi.",
+   "wrong": {
+    "0": "Epiteliy bezning sekretor qismi, qon tomirlari to'sinlar ichida o'tadi, lekin bo'laklarni ular hosil qilmaydi.",
+    "2": "Elastik tolalar stromada bor, lekin bo'laklanishni faqat ular emas, asosan mushak va biriktiruvchi to'qima ta'minlaydi.",
+    "3": "Nerv tolalari faqat innervatsiya qiladi, bo'laklarni ajratuvchi karkas hosil qilmaydi."
+   }
+  },
+  "e4cbdad2b2": {
+   "why": "Bachadon shilliq pardasi (endometriy) bir qavatli silindrsimon epiteliy bilan qoplangan, unda kiprikli va sekretor hujayralar bor.",
+   "wrong": {
+    "1": "Ko'p qavatli yassi epiteliy qin va bachadon bo'yni tashqi qismiga xos, bachadon tanasiga emas.",
+    "2": "Kubsimon epiteliy bachadon shilliq pardasiga xos emas, hujayralar silindrsimon.",
+    "3": "Bachadon shilliq pardasida epiteliy bir qavatli. 'Ko'p qatorli yassi' epiteliy bunday ko'rinishda uchramaydi."
+   }
+  },
+  "e954e7da54": {
+   "why": "Spiral arteriyalar funksional (yuza) qavatni qon bilan ta'minlaydi. Ular spazmga uchrasa, bu qavat ishemiyaga uchrab nekrozga ketadi va menstruatsiyada to'kiladi.",
+   "wrong": {
+    "1": "Bazal qavatni to'g'ri arteriyalar ta'minlaydi, ular spazmga uchramaydi, shuning uchun bazal qavat saqlanib, yangi qavatni tiklaydi.",
+    "2": "Miometriyni boshqa tomirlar ta'minlaydi, spiral arteriyalar spazmi unga bunday ta'sir qilmaydi.",
+    "3": "Perimetriy bachadonning tashqi seroz qavati, spiral arteriyalar bilan bog'liq emas."
+   }
+  },
+  "249d14f42c": {
+   "why": "Kindik tizimchasida allantois, sariqlik qopchasi va uning poyachasi tezda reduksiyaga uchrab yo'qoladi. Kindik tomirlari va Vartonov jeli qoladi.",
+   "wrong": {
+    "1": "Xorion yo'ldoshni hosil qiladi, amnion kindik tizimchasini o'rab turadi: ular reduksiyaga uchramaydi.",
+    "2": "Decidua bachadon shilliq pardasining hosilasi, kindik tizimchasi tarkibida emas.",
+    "3": "Miometriy va perimetriy bachadon devori qavatlari, kindik tizimchasiga tegishli emas."
+   }
+  },
+  "345658ed37": {
+   "why": "Somitning dermatomi mezenximaga ajralib, terining dermasini (biriktiruvchi to'qima qismini) hosil qiladi. Miotom mushaklarni, sklerotom skelet to'qimalarini beradi.",
+   "wrong": {
+    "1": "Ichak shilliq qavati entodermadan rivojlanadi, somitdan emas.",
+    "2": "Nerv nayi ependimasi ektodermadan (neyroektodermadan) hosil bo'ladi.",
+    "3": "Trofoblast blastotsistaning tashqi hujayralari bo'lib, yo'ldoshni hosil qiladi, somit bilan aloqasi yo'q."
+   }
+  },
+  "ebbd6cd2e4": {
+   "why": "To'liq (goloblastik) va tekis maydalanishda tuxum butunlay bo'linadi va blastomerlar taxminan bir xil kattalikda bo'ladi. Bunday maydalanish sariqligi oz va tekis taqsimlangan tuxumlarga xos.",
+   "wrong": {
+    "0": "Vegetativ qutbdagi blastomerlarning yirik bo'lishi notekis maydalanishga xos.",
+    "1": "Goloblastik maydalanishda butun tuxum bo'linadi, animal qutb ham maydalanadi.",
+    "3": "Faqat bitta qutbda bo'linish meroblastik (qisman) maydalanishga xos."
+   }
+  },
+  "2b9731a009": {
+   "why": "Odam va sut emizuvchilar tuxumida sariqlik oz (izoletsital), shuning uchun maydalanish to'liq (goloblastik). Blastomerlar bir vaqtda emas, navbatma-navbat bo'linadi, ya'ni asinxron.",
+   "wrong": {
+    "0": "Meroblastik maydalanish sariqligi ko'p tuxumlarga (qush, baliq) xos, odamniki esa izoletsital va goloblastik.",
+    "1": "Sinxron bo'linish, masalan, lansetnikda kuzatiladi. Sut emizuvchilarda bo'linish asinxron.",
+    "2": "Meroblastik va diskoidal maydalanish sariqlikka boy tuxumlarga (qush, sudralib yuruvchi) xos."
+   }
+  },
+  "cea15cb737": {
+   "why": "Bir kurtakning (induktorning) boshqa kurtak rivojlanishiga ta'sir qilib, uni shakllantirishi embrional induksiya deyiladi. Masalan, xorda nerv nayi hosil bo'lishiga turtki beradi.",
+   "wrong": {
+    "0": "Implantatsiya embrionning bachadon shilliq pardasiga botib kirishi.",
+    "2": "Maydalanish zigotaning ketma-ket bo'linib blastomerlar hosil qilishi.",
+    "3": "Delyaminatsiya blastodermaning ikki varaqqa ajralishi, gastrulyatsiya usullaridan biri."
+   }
+  },
+  "15587c7a22": {
+   "why": "Jigar va me'da osti bezi entodermadan (ichak nayining o'simtalaridan) rivojlanadi, ektodermadan emas. Shuning uchun 'ektoderma — jigar va me'da osti bezi' juftligi noto'g'ri.",
+   "wrong": {
+    "0": "Bu juftlik to'g'ri: nerv to'qimasi ektodermadan (neyroektodermadan) hosil bo'ladi. Savol esa noto'g'ri juftlikni so'rayapti.",
+    "1": "Bu juftlik to'g'ri: ichak nayi epiteliysi entodermadan hosil bo'ladi. Savol esa noto'g'ri juftlikni so'rayapti.",
+    "2": "Bu juftlik to'g'ri: qon va limfa mezodermadan hosil bo'ladi. Savol esa noto'g'ri juftlikni so'rayapti."
+   }
+  },
+  "d2c2f379d3": {
+   "why": "Nerv shikastlanganda neyron tanasidan uzilgan distal aksonning va miyelinning parchalanishi Valler degeneratsiyasi deyiladi. Shundan keyin Shvann hujayralari regeneratsiyaga yo'l tayyorlaydi.",
+   "wrong": {
+    "1": "Regeneratsiya tiklanish jarayoni, parchalanish emas. U Valler degeneratsiyasidan keyin boshlanadi.",
+    "2": "Neyron migratsiyasi embrional rivojlanishda neyronlarning ko'chishi.",
+    "3": "Ependimal proliferatsiya markaziy kanal epiteliysining ko'payishi, periferik nerv shikastlanishiga aloqasi yo'q."
+   }
+  },
+  "d99be195e1": {
+   "why": "Orqa miyaning oldingi ildizi markazdan chiquvchi (efferent) motor tolalardan iborat. Uning kesilishi harakat buyruqlari yo'lini uzadi. Sezuvchi tolalar orqa ildiz orqali kiradi.",
+   "wrong": {
+    "0": "Sezuvchi afferent tolalar orqa ildiz bo'ylab orqa miyaga kiradi, oldingi ildiz kesilishi ularga ta'sir qilmaydi.",
+    "2": "Orqa miya tuguni tolalari sezuvchi bo'lib, orqa ildizga tegishli.",
+    "3": "Assotsiativ tolalar markaziy nerv tizimi ichidagi bog'lanishlar, ildizda emas."
+   }
+  },
+  "24e2c4b60d": {
+   "why": "Psevdounipolyar neyronning periferik o'simtasi retseptorga boradi, markaziy o'simtasi esa orqa ildiz tarkibida orqa miyaga (markaziy nerv tizimiga) kiradi.",
+   "wrong": {
+    "0": "Retseptorga boradigani periferik o'simta, markaziy o'simta teskari yo'nalishda ketadi.",
+    "1": "Skelet mushagiga motor neyronning aksoni boradi, sezuvchi psevdounipolyar neyronniki emas.",
+    "2": "Vegetativ tugunga preganglionar vegetativ tolalar boradi, sezuvchi neyronning markaziy o'simtasi emas."
+   }
+  },
+  "d0ec3b6f33": {
+   "why": "Shvann (lemmotsit) hujayralari periferik nerv tolalarini o'rab, ularning miyelin qobig'ini hosil qiladi. Markaziy nerv tizimida bu ishni oligodendrotsitlar bajaradi.",
+   "wrong": {
+    "0": "Neyron yadrosini neyronning o'zi hosil qiladi, Shvann hujayrasi esa neyron emas, glial hujayra.",
+    "1": "Markaziy kanalni ependimotsitlar qoplaydi.",
+    "2": "Perinevriyni biriktiruvchi to'qima hujayralari (perinevral hujayralar) hosil qiladi."
+   }
+  },
+  "7f57e59eaf": {
+   "why": "II (tashqi donador) va IV (ichki donador) qavatlar mayda donador hujayralardan iborat. Ular kuchli rivojlangan po'stloq granulyar tipda bo'lib, sezuvchi markazlarga xos.",
+   "wrong": {
+    "1": "Agranulyar po'stloqda donador qavatlar sust rivojlangan, u harakatlantiruvchi markazlarga xos.",
+    "2": "Ganglionar — V qavatning nomi, po'stloq tipining nomi emas.",
+    "3": "Polimorf — VI qavatning nomi, po'stloq tipining nomi emas."
+   }
+  },
+  "8f0227ad6d": {
+   "why": "Betc (Betz) hujayralari yirik piramidasimon neyronlar bo'lib, ichki piramidal (ganglionar, V) qavatda joylashadi, ayniqsa harakatlantiruvchi markazlarda.",
+   "wrong": {
+    "1": "Tashqi donador (II) qavatda mayda donador hujayralar bor.",
+    "2": "Molekulyar (I) qavatda neyronlar kam, asosan tolalar bor.",
+    "3": "Polimorf (VI) qavatda turli shakldagi mayda hujayralar bor."
+   }
+  },
+  "374d5f4c94": {
+   "why": "Ko'zning sezuvchi apparati retina bo'lib, u ko'z olmasining ichki, nerv qavatida joylashgan. Fibroz qavat himoya va shakl beradi.",
+   "wrong": {
+    "1": "Fibroz qavat (sklera va shox parda) himoya va shakl beradi, fotoretseptorlar unda yo'q.",
+    "2": "Tomirli qavat oziqlantiradi va ko'zni moslashtirishda ishtirok etadi, sezuvchi hujayralar unda emas.",
+    "3": "Sklera tashqi zich parda, unda fotoretseptor yo'q."
+   }
+  },
+  "2507c07134": {
+   "why": "Qorachiq iris (rangdor parda) dagi ikki silliq mushak bilan boshqariladi: halqasimon mushak (sfinkter) toraytiradi, radial mushak (dilatator) kengaytiradi.",
+   "wrong": {
+    "1": "Pigment epiteliy fotoretseptorlarni oziqlantiradi va ortiqcha yorug'likni yutadi, qorachiqni boshqarmaydi.",
+    "2": "Gavhar tolalari yorug'likni sindirishga xizmat qiladi, qorachiq kengligini boshqarmaydi.",
+    "3": "Sklera kollagenlari ko'zga shakl va mustahkamlik beradi."
+   }
+  },
+  "66bad9e988": {
+   "why": "Suyak chig'anog'i o'z o'qi atrofida taxminan 2,5 marta spiral bo'lib buraladi.",
+   "wrong": {
+    "1": "Bir marta emas: chig'anoq taxminan 2,5 marta buraladi.",
+    "2": "1,5 marta ham emas, ko'proq: taxminan 2,5 marta.",
+    "3": "2 marta ham aniq emas: darslikda 2,5 marta ko'rsatiladi."
+   }
+  }
+ }
+}

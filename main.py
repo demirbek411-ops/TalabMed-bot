@@ -62,7 +62,6 @@ BTN_FEEDBACK = "💬 Fikr bildirish"
 BTN_ORALIQ = "📝 Oraliqlar"
 BTN_BACK = "⬅️ Orqaga"
 BTN_STREAK = "🔥 Seriyam"
-BTN_QOTD = "🧠 Kunning savoli"
 
 ORALIQ_PREFIX = "oraliq_"      # PDF fayl nomi shu so'z bilan boshlanishi kerak
 FILE_PREFIX = "📄 "
@@ -73,7 +72,6 @@ MENU = ReplyKeyboardMarkup(
         [KeyboardButton(text=BTN_ABOUT), KeyboardButton(text=BTN_CHANNELS)],
         [KeyboardButton(text=BTN_CONTACT), KeyboardButton(text=BTN_FEEDBACK)],
         [KeyboardButton(text=BTN_ORALIQ), KeyboardButton(text=BTN_STREAK)],
-        [KeyboardButton(text=BTN_QOTD)],
     ],
     resize_keyboard=True,
 )
@@ -870,26 +868,6 @@ async def on_qotd_answer(cb: CallbackQuery):
                 print("Seriya xabari yuborilmadi:", uid, e)
 
 
-@dp.message(F.text == BTN_QOTD)
-async def btn_qotd(msg: Message):
-    feedback_mode.pop(msg.from_user.id, None)
-    if not QOTD_QUESTIONS or not QOTD_REST:
-        await msg.answer("Savol hozircha tayyor emas. Keyinroq urinib ko'ring.")
-        return
-    day = qotd_day()
-    prev = await vote_get(day, msg.from_user.id)
-    if prev is not None:
-        p = qotd_for(day)
-        counts = await vote_counts(day, len(p["opts"]))
-        await msg.answer(qotd_result_text(p, prev, counts))
-        return
-    try:
-        await qotd_send(msg.from_user.id)
-    except Exception as e:
-        print("qotd_send xatosi:", e)
-        await msg.answer("Savol hozircha tayyor emas. Keyinroq urinib ko'ring.")
-
-
 @dp.message(Command("qotd"))
 async def cmd_qotd(msg: Message):
     """Admin uchun: bugungi savolni faqat o'zingizga yuboradi (sinash)."""
@@ -1184,6 +1162,15 @@ async def qotd_loop():
                 except Exception as e:
                     print("Kunning savoli yuborilmadi:", uid, e)
                 await asyncio.sleep(0.06)
+            # izohli savollar tugab borayotgan bo'lsa, adminga eslatma
+            st = QOTD_EXPL.get("start")
+            if st:
+                left = len(QOTD_CURATED) - (qotd_day() - datetime.fromisoformat(st).date().toordinal()) - 1
+                if left <= 2:
+                    await bot.send_message(
+                        ADMIN_ID,
+                        f"⚠️ Izohli savollar {max(left, 0)} kunga qoldi. Yangi izohlar tayyorlash vaqti.",
+                    )
         except Exception as e:
             print("qotd_loop xatosi:", e)
 
