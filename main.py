@@ -62,6 +62,7 @@ BTN_FEEDBACK = "💬 Fikr bildirish"
 BTN_ORALIQ = "📝 Oraliqlar"
 BTN_BACK = "⬅️ Orqaga"
 BTN_STREAK = "🔥 Seriyam"
+BTN_RATING = "🏆 Reyting"
 
 ORALIQ_PREFIX = "oraliq_"      # PDF fayl nomi shu so'z bilan boshlanishi kerak
 FILE_PREFIX = "📄 "
@@ -72,6 +73,7 @@ MENU = ReplyKeyboardMarkup(
         [KeyboardButton(text=BTN_ABOUT), KeyboardButton(text=BTN_CHANNELS)],
         [KeyboardButton(text=BTN_CONTACT), KeyboardButton(text=BTN_FEEDBACK)],
         [KeyboardButton(text=BTN_ORALIQ), KeyboardButton(text=BTN_STREAK)],
+        [KeyboardButton(text=BTN_RATING)],
     ],
     resize_keyboard=True,
 )
@@ -860,6 +862,7 @@ async def on_qotd_answer(cb: CallbackQuery):
         print("qotd edit xatosi:", e)
     await cb.answer("✅ To'g'ri!" if my_pos == p["correct"] else "❌ Xato")
     if inserted:
+        await stats_add(uid, cb.from_user.first_name, 1, 1 if my_pos == p["correct"] else 0)
         v = await streak_add(uid, 1)
         if v and v.get("just_completed") and v.get("message"):
             try:
@@ -880,6 +883,172 @@ async def cmd_qotd(msg: Message):
         return
     if not ok:
         await msg.answer("questions.json yuklanmagan (faylni repozitoriyga qo'shing).")
+
+
+# ---------- Reyting (eng faol / eng ko'p to'g'ri javob) ----------
+
+MEDALS = {1: "🥇", 2: "🥈", 3: "🥉"}
+
+
+def week_key():
+    y, w, _ = datetime.now(TZ).isocalendar()
+    return f"{y}-W{w:02d}"
+
+
+def clean_name(name, uid):
+    n = (name or "").strip()
+    return n[:18] if n else f"Foydalanuvchi {str(uid)[-4:]}"
+
+
+async def stats_add(user_id, name, answered, correct):
+    """Yechilgan va to'g'ri javoblar sonini jami hamda haftalik hisoblagichlarga qo'shadi."""
+    if answered <= 0 or not SUPABASE_URL or not SUPABASE_KEY:
+        return
+    correct = max(0, min(correct, answered))
+    wk = week_key()
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.get(
+                f"{SUPABASE_URL}/rest/v1/stats?select=*&user_id=eq.{user_id}",
+                headers=db_headers(),
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as r:
+                if r.status >= 300:
+                    print("stats_add o'qish xato:", r.status, await r.text())
+                    return
+                rows = await r.json()
+            row = rows[0] if rows else {}
+            if row.get("week_key") == wk:
+                wt = (row.get("week_total") or 0) + answered
+                wc = (row.get("week_correct") or 0) + correct
+            else:
+                wt, wc = answered, correct
+            new = {
+                "user_id": user_id,
+                "name": clean_name(name or row.get("name"), user_id),
+                "total": (row.get("total") or 0) + answered,
+                "correct": (row.get("correct") or 0) + correct,
+                "week_key": wk,
+                "week_total": wt,
+                "week_correct": wc,
+            }
+            async with s.post(
+                f"{SUPABASE_URL}/rest/v1/stats?on_conflict=user_id",
+                headers=db_headers({"Prefer": "resolution=merge-duplicates,return=minimal"}),
+                json=new,
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as r2:
+                if r2.status >= 300:
+                    print("stats_add yozish xato:", r2.status, await r2.text())
+    except Exception as e:
+        print("stats_add xatosi:", e)
+
+
+def lb_col(metric, period):
+    base = "total" if metric == "a" else "correct"
+    return ("week_" + base) if period == "w" else base
+
+
+async def lb_fetch(metric, period, user_id):
+    """(top10, mening_natijam, mening_o'rnim) yoki xato bo'lsa None.
+    top10 = [(o'rin, ism, qiymat, user_id)]; teng natijalar bir xil o'rinni oladi."""
+    col = lb_col(metric, period)
+    flt = f"&week_key=eq.{week_key()}" if period == "w" else ""
+    t = aiohttp.ClientTimeout(total=10)
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.get(
+                f"{SUPABASE_URL}/rest/v1/stats?select=user_id,name,{col}&{col}=gt.0{flt}"
+                f"&order={col}.desc,user_id.asc&limit=10",
+                headers=db_headers(), timeout=t,
+            ) as r:
+                if r.status >= 300:
+                    print("lb_fetch xato:", r.status, await r.text())
+                    return None
+                rows = await r.json()
+            top, prev_v, prev_rank = [], None, 0
+            for i, x in enumerate(rows):
+                v = x[col]
+                rank = prev_rank if v == prev_v else i + 1
+                prev_v, prev_rank = v, rank
+                top.append((rank, x.get("name") or "—", v, x["user_id"]))
+            async with s.get(
+                f"{SUPABASE_URL}/rest/v1/stats?select={col}&user_id=eq.{user_id}{flt}",
+                headers=db_headers(), timeout=t,
+            ) as r:
+                mine = await r.json() if r.status < 300 else []
+            my_val = mine[0][col] if mine else 0
+            my_rank = None
+            if my_val > 0:
+                async with s.get(
+                    f"{SUPABASE_URL}/rest/v1/stats?select=user_id&{col}=gt.{my_val}{flt}&limit=1",
+                    headers=db_headers({"Prefer": "count=exact"}), timeout=t,
+                ) as r:
+                    if r.status < 300:
+                        my_rank = int(r.headers.get("Content-Range", "*/0").split("/")[-1]) + 1
+            return top, my_val, my_rank
+    except Exception as e:
+        print("lb_fetch xatosi:", e)
+        return None
+
+
+def lb_text(metric, period, data, uid):
+    top, my_val, my_rank = data
+    title_m = "🔥 Eng faol (yechilgan testlar)" if metric == "a" else "🎯 Eng ko'p to'g'ri javob"
+    title_p = "📅 Shu hafta" if period == "w" else "🏆 Barcha vaqt"
+    unit = "test" if metric == "a" else "ta to'g'ri"
+    lines = ["🏆 Reyting", f"{title_m} · {title_p}", ""]
+    if not top:
+        lines.append("Hozircha natijalar yo'q. Birinchi bo'ling: saytda test yeching!")
+    for rank, name, v, u in top:
+        mark = MEDALS.get(rank, f"{rank}.")
+        me = "  👈 siz" if u == uid else ""
+        lines.append(f"{mark} {name} — {v} {unit}{me}")
+    lines.append("")
+    if my_rank:
+        lines.append(f"{MEDALS.get(my_rank, '👤')} Sizning o'rningiz: {my_rank}-o'rin — {my_val} {unit}")
+    else:
+        lines.append("👤 Siz hali reytingda yo'qsiz. Saytda test yeching!")
+    lines += ["", "Reyting saytdagi testlar va kunning savoli asosida hisoblanadi."]
+    return "\n".join(lines)
+
+
+def lb_kb(metric, period):
+    def b(text, m, p, on):
+        return InlineKeyboardButton(text=("✅ " if on else "") + text, callback_data=f"lb:{m}:{p}")
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [b("🔥 Eng faol", "a", period, metric == "a"), b("🎯 To'g'ri javob", "c", period, metric == "c")],
+        [b("📅 Hafta", metric, "w", period == "w"), b("🏆 Jami", metric, "t", period == "t")],
+    ])
+
+
+@dp.message(F.text == BTN_RATING)
+async def btn_rating(msg: Message):
+    feedback_mode.pop(msg.from_user.id, None)
+    data = await lb_fetch("a", "w", msg.from_user.id)
+    if data is None:
+        await msg.answer("Reytingni hozir ko'rsatib bo'lmadi. Keyinroq urinib ko'ring.")
+        return
+    await msg.answer(lb_text("a", "w", data, msg.from_user.id), reply_markup=lb_kb("a", "w"))
+
+
+@dp.callback_query(F.data.startswith("lb:"))
+async def on_rating(cb: CallbackQuery):
+    try:
+        _, m, p = cb.data.split(":")
+        assert m in ("a", "c") and p in ("w", "t")
+    except Exception:
+        await cb.answer()
+        return
+    data = await lb_fetch(m, p, cb.from_user.id)
+    if data is None:
+        await cb.answer("Hozir ko'rsatib bo'lmadi. Keyinroq urinib ko'ring.", show_alert=True)
+        return
+    try:
+        await cb.message.edit_text(lb_text(m, p, data, cb.from_user.id), reply_markup=lb_kb(m, p))
+    except Exception:
+        pass   # matn o'zgarmagan bo'lsa Telegram xato beradi, bu normal
+    await cb.answer()
 
 
 # ---------- Oraliqlar (PDF fayllar) ----------
@@ -1069,7 +1238,13 @@ async def api_answer(request):
     except Exception:
         n = 1
     n = max(1, min(n, 50))
+    try:
+        c = int(body.get("c", 0))
+    except Exception:
+        c = 0
+    c = max(0, min(c, n))
     v = await streak_add(user["id"], n)
+    await stats_add(user["id"], user.get("first_name"), n, c)
     if v is None:
         return web.json_response({"ok": False, "error": "db"}, status=500)
     if v.get("just_completed") and v.get("message"):
