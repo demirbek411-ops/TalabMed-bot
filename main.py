@@ -4,6 +4,7 @@ import json
 import time
 import hashlib
 import asyncio
+import random
 from datetime import datetime, timezone, timedelta
 from urllib.parse import parse_qsl, quote
 import aiohttp
@@ -475,6 +476,37 @@ async def btn_feedback(msg: Message):
 
 DAILY_GOAL = 10   # kuniga nechta test kerak
 
+# Har kuni maqsad bajarilganda tasodifiy bittasi chiqadi ({n} = seriya kunlari)
+DAILY_MESSAGES = [
+    "🔥 {n} kunlik seriya!\nHar kungi 10 ta test kelajakdagi yaxshi shifokorni shakllantiradi.",
+    "✅ Bugungi maqsad bajarildi.\nKichik qadamlar katta natija beradi, {n}-kun ortda qoldi.",
+    "💪 {n} kun ketma-ket!\nImtihonda aynan shu odat sizni qutqaradi.",
+    "🩺 Bilim kunma-kun yig'iladi.\n{n}-kun tayyor, davom eting!",
+    "📚 Bugun ham o'zingizni yengdingiz.\nSeriya: {n} kun.",
+]
+
+# Nishonlar: kun -> (belgi, matn)
+MILESTONES = {
+    3: ("🌱", "Odat shakllana boshladi. Eng qiyini boshlash edi, siz boshladingiz."),
+    7: ("🏅", "Bir hafta uzluksiz! Hamma ham bunga erisha olmaydi."),
+    14: ("🥈", "Ikki hafta. Endi bu odat, majburiyat emas."),
+    30: ("🥇", "Bir oy! Siz intizomli shifokor yo'lidasiz."),
+    60: ("💎", "Ikki oy. Bilimingiz har kuni ko'rinadigan darajada o'sdi."),
+    100: ("👑", "100 kun! Bu endi seriya emas, siz haqingizdagi hikoya."),
+}
+
+NEW_START_TEXT = "🌟 Yangi boshlanish!\nSeriya qaytadan boshlandi. Eng uzun natijangiz {best} kun edi, demak buni qila olasiz."
+
+
+def praise_text(streak, best):
+    """Bugungi maqsad bajarilganda chiqadigan ilhomlantiruvchi matn."""
+    if streak in MILESTONES:
+        icon, text = MILESTONES[streak]
+        return f"{icon} {streak} kunlik seriya!\n{text}"
+    if streak == 1 and best > 1:
+        return NEW_START_TEXT.format(best=best)
+    return random.choice(DAILY_MESSAGES).format(n=streak)
+
 
 def today_str(offset=0):
     return (datetime.now(TZ).date() + timedelta(days=offset)).isoformat()
@@ -564,6 +596,8 @@ async def streak_add(user_id, n=1):
         return None
     view = streak_view(new)
     view["just_completed"] = just
+    if just:
+        view["message"] = praise_text(streak, best)
     return view
 
 
@@ -580,8 +614,18 @@ def streak_text(v):
     ]
     if v["done_today"]:
         lines.append("✅ Bugungi maqsad bajarildi. Barakalla!")
+    elif v["streak"] == 0 and v["best"] > 0:
+        lines.append(
+            f"Seriya uzildi, lekin eng uzun natijangiz {v['best']} kun edi, demak buni qila olasiz. "
+            f"Bugun yangisini boshlang: atigi {v['goal']} ta test."
+        )
     else:
-        lines.append(f"Seriyani saqlash uchun yana {v['goal'] - done} ta test yeching.")
+        lines.append(f"Bugun {v['goal'] - done} ta test qoldi, siz uddalaysiz.")
+    nxt = [m for m in MILESTONES if m > v["streak"]]
+    if nxt:
+        m = min(nxt)
+        icon = MILESTONES[m][0]
+        lines.append(f"\n{icon} Keyingi nishon: {m} kun (yana {m - v['streak']} kun)")
     return "\n".join(lines)
 
 
@@ -788,6 +832,11 @@ async def api_answer(request):
     v = await streak_add(user["id"], n)
     if v is None:
         return web.json_response({"ok": False, "error": "db"}, status=500)
+    if v.get("just_completed") and v.get("message"):
+        try:
+            await bot.send_message(user["id"], v["message"])
+        except Exception as e:
+            print("Seriya xabari yuborilmadi:", user["id"], e)
     return web.json_response({"ok": True, **v})
 
 
@@ -827,8 +876,8 @@ async def streak_reminder_loop():
                 try:
                     await bot.send_message(
                         row["user_id"],
-                        f"🔥 {row['streak']} kunlik seriyangiz yo'qolishi mumkin. "
-                        f"Bugun {DAILY_GOAL} ta test yeching.",
+                        f"Bugun {DAILY_GOAL} ta test qoldi, siz uddalaysiz. "
+                        f"🔥 {row['streak']} kunlik seriyangizni davom ettiring.",
                         reply_markup=app_keyboard(SITE_URL, "🌐 Test yechish"),
                     )
                 except Exception as e:
