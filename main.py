@@ -60,6 +60,7 @@ BTN_CONTACT = "📞 Aloqa"
 BTN_FEEDBACK = "💬 Fikr bildirish"
 BTN_ORALIQ = "📝 Oraliqlar"
 BTN_BACK = "⬅️ Orqaga"
+BTN_STREAK = "🔥 Seriyam"
 
 ORALIQ_PREFIX = "oraliq_"      # PDF fayl nomi shu so'z bilan boshlanishi kerak
 FILE_PREFIX = "📄 "
@@ -69,7 +70,7 @@ MENU = ReplyKeyboardMarkup(
         [KeyboardButton(text=BTN_APP), KeyboardButton(text=BTN_SCHEDULE)],
         [KeyboardButton(text=BTN_ABOUT), KeyboardButton(text=BTN_CHANNELS)],
         [KeyboardButton(text=BTN_CONTACT), KeyboardButton(text=BTN_FEEDBACK)],
-        [KeyboardButton(text=BTN_ORALIQ)],
+        [KeyboardButton(text=BTN_ORALIQ), KeyboardButton(text=BTN_STREAK)],
     ],
     resize_keyboard=True,
 )
@@ -238,8 +239,7 @@ async def warn_left(user_id, left):
 
 
 async def recheck_user(user_id, flag):
-    """Obunani qayta tekshiradi, bazani yangilaydi, chiqib ketgan bo'lsa ogohlantiradi.
-    Ogohlantirish yuborilgan bo'lsa True qaytaradi."""
+    """Obunani qayta tekshiradi, bazani yangilaydi, chiqib ketgan bo'lsa ogohlantiradi."""
     left = await not_subscribed(user_id)
     now = not left
     if flag is not now:
@@ -249,8 +249,6 @@ async def recheck_user(user_id, flag):
         })
     if flag is True and not now:
         await warn_left(user_id, left)
-        return True
-    return False
 
 
 @dp.chat_member()
@@ -259,7 +257,6 @@ async def on_member_change(ev: ChatMemberUpdated):
     if uname not in [u.lower() for _, u in CHANNELS]:
         return
     old, new = ev.old_chat_member.status, ev.new_chat_member.status
-    print(f"chat_member: {uname} {ev.new_chat_member.user.id} {old} -> {new}")
     if new in ("left", "kicked") and old not in ("left", "kicked"):
         uid = ev.new_chat_member.user.id
         flag = await get_flag(uid)
@@ -267,10 +264,8 @@ async def on_member_change(ev: ChatMemberUpdated):
 
 
 async def sweep_once():
-    """Bazadagi hammani aylanib chiqadi. (tekshirilgan, ogohlantirilgan) sonini qaytaradi."""
+    """Bazadagi hammani aylanib chiqadi (har birini ~0.2 soniyada)."""
     offset = 0
-    checked = 0
-    warned = 0
     while True:
         async with aiohttp.ClientSession() as s:
             async with s.get(
@@ -283,45 +278,22 @@ async def sweep_once():
             break
         for row in rows:
             try:
-                if await recheck_user(row["user_id"], row.get("is_member")):
-                    warned += 1
-                checked += 1
+                await recheck_user(row["user_id"], row.get("is_member"))
             except Exception as e:
                 print("sweep xatosi:", e)
             await asyncio.sleep(0.2)
         offset += 500
-    print(f"sweep tugadi: tekshirildi={checked}, ogohlantirildi={warned}")
-    return checked, warned
-
-
-SWEEP_EVERY = 3600   # soniya: har soatda hammani tekshiradi
 
 
 async def sweep_loop():
-    await asyncio.sleep(120)
+    await asyncio.sleep(300)
     while True:
         if SUPABASE_URL and SUPABASE_KEY:
             try:
                 await sweep_once()
             except Exception as e:
                 print("sweep_once xatosi:", e)
-        await asyncio.sleep(SWEEP_EVERY)
-
-
-@dp.message(Command("sweep"))
-async def sweep_cmd(msg: Message):
-    if msg.from_user.id != ADMIN_ID:
-        return
-    if not SUPABASE_URL or not SUPABASE_KEY:
-        await msg.answer("Baza ulanmagan (SUPABASE_URL / SUPABASE_KEY yo'q).")
-        return
-    await msg.answer("⏳ Hammani tekshiryapman, biroz kuting...")
-    try:
-        checked, warned = await sweep_once()
-        await msg.answer(f"✅ Tekshirildi: {checked} ta foydalanuvchi.\n⚠️ Ogohlantirish yuborildi: {warned} ta.")
-    except Exception as e:
-        print("sweep_cmd xatosi:", e)
-        await msg.answer("Tekshirishda xatolik. Render Logs ni ko'ring.")
+        await asyncio.sleep(6 * 3600)
 
 
 @dp.message(Command("stats"))
@@ -461,6 +433,133 @@ async def btn_feedback(msg: Message):
         "Anonim yuborsangiz, sizning ismingiz va akkauntingiz egasiga ko'rsatilmaydi. "
         "Qanday yuborasiz?",
         reply_markup=kb,
+    )
+
+
+# ---------- Kunlik seriya (Supabase: streaks jadvali) ----------
+
+DAILY_GOAL = 10   # kuniga nechta test kerak
+
+
+def today_str(offset=0):
+    return (datetime.now(TZ).date() + timedelta(days=offset)).isoformat()
+
+
+async def streak_get(user_id):
+    """Qator (dict), qator yo'q bo'lsa {}, xato bo'lsa None."""
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return None
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.get(
+                f"{SUPABASE_URL}/rest/v1/streaks?select=*&user_id=eq.{user_id}",
+                headers=db_headers(),
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as r:
+                if r.status >= 300:
+                    print("streak_get xato:", r.status, await r.text())
+                    return None
+                data = await r.json()
+                return data[0] if data else {}
+    except Exception as e:
+        print("streak_get xatosi:", e)
+        return None
+
+
+async def streak_save(row):
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.post(
+                f"{SUPABASE_URL}/rest/v1/streaks?on_conflict=user_id",
+                headers=db_headers({"Prefer": "resolution=merge-duplicates,return=minimal"}),
+                json=row,
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as r:
+                if r.status >= 300:
+                    print("streak_save xato:", r.status, await r.text())
+                    return False
+                return True
+    except Exception as e:
+        print("streak_save xatosi:", e)
+        return False
+
+
+def streak_view(row):
+    today, yest = today_str(), today_str(-1)
+    last = row.get("last_active_date")
+    streak = row.get("streak") or 0
+    if last not in (today, yest):
+        streak = 0   # kecha ham, bugun ham faol bo'lmagan: seriya uzilgan
+    cnt = (row.get("today_count") or 0) if row.get("today_date") == today else 0
+    return {
+        "streak": streak,
+        "best": row.get("best_streak") or 0,
+        "today_count": cnt,
+        "goal": DAILY_GOAL,
+        "done_today": last == today,
+    }
+
+
+async def streak_add(user_id, n=1):
+    """n ta test yechilganini hisoblaydi. Yangilangan holatni qaytaradi (xato bo'lsa None)."""
+    row = await streak_get(user_id)
+    if row is None:
+        return None
+    today, yest = today_str(), today_str(-1)
+    streak = row.get("streak") or 0
+    best = row.get("best_streak") or 0
+    last = row.get("last_active_date")
+    cnt = (row.get("today_count") or 0) if row.get("today_date") == today else 0
+    cnt += n
+    just = False
+    if cnt >= DAILY_GOAL and last != today:
+        streak = streak + 1 if last == yest else 1
+        best = max(best, streak)
+        last = today
+        just = True
+    new = {
+        "user_id": user_id,
+        "streak": streak,
+        "best_streak": best,
+        "last_active_date": last,
+        "today_date": today,
+        "today_count": cnt,
+    }
+    if not await streak_save(new):
+        return None
+    view = streak_view(new)
+    view["just_completed"] = just
+    return view
+
+
+def streak_text(v):
+    done = min(v["today_count"], v["goal"])
+    bar = "█" * done + "░" * (v["goal"] - done)
+    lines = [
+        f"🔥 {v['streak']} kunlik seriya",
+        f"🏆 Eng uzun seriya: {v['best']} kun",
+        "",
+        f"Bugungi maqsad: {done}/{v['goal']} test",
+        bar,
+        "",
+    ]
+    if v["done_today"]:
+        lines.append("✅ Bugungi maqsad bajarildi. Barakalla!")
+    else:
+        lines.append(f"Seriyani saqlash uchun yana {v['goal'] - done} ta test yeching.")
+    return "\n".join(lines)
+
+
+@dp.message(F.text == BTN_STREAK)
+async def btn_streak(msg: Message):
+    feedback_mode.pop(msg.from_user.id, None)
+    row = await streak_get(msg.from_user.id)
+    if row is None:
+        await msg.answer("Seriyani hozir ko'rsatib bo'lmadi. Keyinroq urinib ko'ring.")
+        return
+    await msg.answer(
+        streak_text(streak_view(row)),
+        reply_markup=app_keyboard(SITE_URL, "🌐 Test yechish"),
     )
 
 
@@ -627,6 +726,83 @@ async def api_check(request):
     return web.json_response({"ok": not left, "missing": missing})
 
 
+async def _streak_user(request):
+    """(user, xato_javobi) qaytaradi."""
+    try:
+        body = await request.json()
+    except Exception:
+        return None, None, web.json_response({"ok": False, "error": "bad_request"}, status=400)
+    user = user_from_init_data(body.get("initData", ""))
+    if not user:
+        return None, None, web.json_response({"ok": False, "error": "invalid"}, status=403)
+    return user, body, None
+
+
+async def api_answer(request):
+    """Sayt har test javobidan keyin chaqiradi: seriya hisobini yangilaydi."""
+    if request.method == "OPTIONS":
+        return web.Response()
+    user, body, err = await _streak_user(request)
+    if err:
+        return err
+    try:
+        n = int(body.get("n", 1))
+    except Exception:
+        n = 1
+    n = max(1, min(n, 50))
+    v = await streak_add(user["id"], n)
+    if v is None:
+        return web.json_response({"ok": False, "error": "db"}, status=500)
+    return web.json_response({"ok": True, **v})
+
+
+async def api_streak(request):
+    """Sayt seriyani ko'rsatish uchun (hisobni o'zgartirmaydi)."""
+    if request.method == "OPTIONS":
+        return web.Response()
+    user, body, err = await _streak_user(request)
+    if err:
+        return err
+    row = await streak_get(user["id"])
+    if row is None:
+        return web.json_response({"ok": False, "error": "db"}, status=500)
+    return web.json_response({"ok": True, **streak_view(row)})
+
+
+async def streak_reminder_loop():
+    """Har kuni 20:00 (Toshkent) da bugungi maqsadini bajarmagan seriya egalariga eslatma."""
+    while True:
+        now = datetime.now(TZ)
+        nxt = now.replace(hour=20, minute=0, second=0, microsecond=0)
+        if nxt <= now:
+            nxt += timedelta(days=1)
+        await asyncio.sleep((nxt - now).total_seconds())
+        if not SUPABASE_URL or not SUPABASE_KEY:
+            continue
+        try:
+            async with aiohttp.ClientSession() as s:
+                async with s.get(
+                    f"{SUPABASE_URL}/rest/v1/streaks?select=user_id,streak"
+                    f"&last_active_date=eq.{today_str(-1)}&streak=gt.0&limit=1000",
+                    headers=db_headers(),
+                    timeout=aiohttp.ClientTimeout(total=30),
+                ) as r:
+                    rows = await r.json() if r.status < 300 else []
+            for row in rows:
+                try:
+                    await bot.send_message(
+                        row["user_id"],
+                        f"🔥 {row['streak']} kunlik seriyangiz yo'qolishi mumkin. "
+                        f"Bugun {DAILY_GOAL} ta test yeching.",
+                        reply_markup=app_keyboard(SITE_URL, "🌐 Test yechish"),
+                    )
+                except Exception as e:
+                    print("Eslatma yuborilmadi:", row.get("user_id"), e)
+                await asyncio.sleep(0.1)
+        except Exception as e:
+            print("streak eslatma xatosi:", e)
+
+
 async def health(request):
     return web.Response(text="OK")
 
@@ -635,10 +811,13 @@ async def main():
     app = web.Application(middlewares=[cors_mw])
     app.router.add_get("/", health)
     app.router.add_route("*", "/api/check", api_check)
+    app.router.add_route("*", "/api/answer", api_answer)
+    app.router.add_route("*", "/api/streak", api_streak)
     runner = web.AppRunner(app)
     await runner.setup()
     await web.TCPSite(runner, "0.0.0.0", int(os.environ.get("PORT", 8080))).start()
     asyncio.create_task(sweep_loop())
+    asyncio.create_task(streak_reminder_loop())
     await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
 
 
