@@ -327,6 +327,41 @@ async def stats(msg: Message):
         await msg.answer("Statistikani olishda xatolik. Loglarni tekshiring.")
 
 
+@dp.message(Command("dbtest"))
+async def dbtest(msg: Message):
+    """Admin uchun: bazaga ulanishni tekshiradi (kalitni ko'rsatmaydi)."""
+    if msg.from_user.id != ADMIN_ID:
+        return
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        await msg.answer("SUPABASE_URL yoki SUPABASE_KEY bo'sh.")
+        return
+    host = SUPABASE_URL.replace("https://", "").replace("http://", "")
+    if SUPABASE_KEY.startswith("sb_secret_"):
+        ktype = "sb_secret (to'g'ri)"
+    elif SUPABASE_KEY.startswith("sb_publishable_"):
+        ktype = "sb_publishable (NOTO'G'RI, secret kerak)"
+    elif SUPABASE_KEY.startswith("eyJ"):
+        ktype = "eyJ (JWT: anon yoki service_role bo'lishi mumkin)"
+    else:
+        ktype = "noma'lum ko'rinish"
+    lines = [f"URL: {host}", f"Kalit turi: {ktype}", ""]
+    for table in ("bot_users", "streaks"):
+        try:
+            async with aiohttp.ClientSession() as s:
+                async with s.get(
+                    f"{SUPABASE_URL}/rest/v1/{table}?select=*&limit=1",
+                    headers=db_headers(),
+                    timeout=aiohttp.ClientTimeout(total=10),
+                ) as r:
+                    body = (await r.text())[:200]
+                    lines.append(f"{table}: HTTP {r.status}")
+                    if r.status >= 300:
+                        lines.append(body)
+        except Exception as e:
+            lines.append(f"{table}: xato {e}")
+    await msg.answer("\n".join(lines))
+
+
 @dp.message(CommandStart())
 async def start(msg: Message):
     feedback_mode.pop(msg.from_user.id, None)
