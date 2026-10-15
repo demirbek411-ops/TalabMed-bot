@@ -23,6 +23,7 @@ from aiogram.types import (
 TOKEN = "".join(os.environ["BOT_TOKEN"].split())
 
 SITE_URL = "https://demirbek411-ops.github.io/TalabaMed-site/"
+LEX_URL = SITE_URL.rstrip("/") + "/lugat.html"   # Lotincha lug'at oynasi (mini ilova)
 SITE_ORIGIN = "https://demirbek411-ops.github.io"
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "").strip().rstrip("/")
@@ -76,7 +77,7 @@ MENU = ReplyKeyboardMarkup(
         [KeyboardButton(text=BTN_ABOUT), KeyboardButton(text=BTN_CHANNELS)],
         [KeyboardButton(text=BTN_CONTACT), KeyboardButton(text=BTN_FEEDBACK)],
         [KeyboardButton(text=BTN_ORALIQ), KeyboardButton(text=BTN_STREAK)],
-        [KeyboardButton(text=BTN_RATING), KeyboardButton(text=BTN_LEXICON)],
+        [KeyboardButton(text=BTN_RATING), KeyboardButton(text=BTN_LEXICON, web_app=WebAppInfo(url=LEX_URL))],
     ],
     resize_keyboard=True,
 )
@@ -1067,9 +1068,19 @@ def _load_lex():
 
 
 def _lx_norm(s):
+    """Qidiruv uchun soddalashtirish: imlo variantlarini birlashtiradi (th=t, ph=f, ae=e, c=k/s, y=i ...)."""
     s = (s or "").lower().replace("ё", "е")
     for ch in "'‘’ʻʼ`´":
         s = s.replace(ch, "")
+    s = re.sub(r"ph", "f", s)
+    s = re.sub(r"th", "t", s)
+    s = re.sub(r"ch|kh", "x", s)
+    s = re.sub(r"ae|oe", "e", s)
+    s = re.sub(r"qu", "kv", s)
+    s = re.sub(r"c(?=[eiy])", "s", s)
+    s = s.replace("c", "k").replace("q", "k").replace("y", "i").replace("w", "v")
+    s = s.replace("ks", "x").replace("ts", "s")
+    s = re.sub(r"(.)\1+", r"\1", s)
     return " ".join(s.split())
 
 
@@ -1085,6 +1096,12 @@ LEX_FIELDS = [
     for x in LEX
 ]
 lexicon_mode = {}   # foydalanuvchi -> lug'at rejimi tugash vaqti
+LEX_WORDS = {}
+for _i, _fields in enumerate(LEX_FIELDS):
+    for _f in _fields:
+        for _w in _f.split():
+            if len(_w) > 2:
+                LEX_WORDS.setdefault(_w, set()).add(_i)
 
 
 def lx_search(query, limit=8):
@@ -1116,8 +1133,18 @@ def lx_search(query, limit=8):
             best = max(best, sc)
         if best:
             scored.append((best, len(LEX[i]["l"]), i))
+    if not scored and len(q) >= 3:   # imlo xatosi bo'lsa: o'xshash so'zlar
+        import difflib
+        for w in difflib.get_close_matches(q, list(LEX_WORDS), n=5, cutoff=0.75):
+            for i in LEX_WORDS[w]:
+                scored.append((20, len(LEX[i]["l"]), i))
     scored.sort(key=lambda t: (-t[0], t[1]))
-    return [i for _, _, i in scored[:limit]]
+    seen, out = set(), []
+    for _, _, i in scored:
+        if i not in seen:
+            seen.add(i)
+            out.append(i)
+    return out[:limit]
 
 
 def lx_card(i):
@@ -1145,7 +1172,7 @@ LEX_HINT = (
     "📚 Lotincha lug'at\n\n"
     "Atamani yozing: lotincha, o'zbekcha, ruscha yoki inglizcha.\n"
     "Masalan: epit, yurak, печень, liver\n\n"
-    "Boshqa bo'limga o'tish uchun pastdagi menyudan tugmani bosing.\n"
+    "Qidiruv oynasi bilan ochish uchun /menu yuboring va 📚 tugmasini qayta bosing.\n"
     "Istalgan chatda ham ishlaydi: @Talaba_Med_bot epit"
 )
 
