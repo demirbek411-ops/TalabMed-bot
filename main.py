@@ -5,6 +5,7 @@ import time
 import hashlib
 import asyncio
 import random
+import re
 from datetime import datetime, timezone, timedelta
 from urllib.parse import parse_qsl, quote
 import aiohttp
@@ -16,6 +17,7 @@ from aiogram.types import (
     InlineKeyboardMarkup, InlineKeyboardButton,
     ReplyKeyboardMarkup, KeyboardButton, ChatMemberUpdated,
     WebAppInfo, MenuButtonWebApp,
+    InlineQuery, InlineQueryResultArticle, InputTextMessageContent,
 )
 
 TOKEN = "".join(os.environ["BOT_TOKEN"].split())
@@ -63,6 +65,7 @@ BTN_ORALIQ = "📝 Oraliqlar"
 BTN_BACK = "⬅️ Orqaga"
 BTN_STREAK = "🔥 Seriyam"
 BTN_RATING = "🏆 Reyting"
+BTN_LEXICON = "📚 Lotincha lug'at"
 
 ORALIQ_PREFIX = "oraliq_"      # PDF fayl nomi shu so'z bilan boshlanishi kerak
 FILE_PREFIX = "📄 "
@@ -73,7 +76,7 @@ MENU = ReplyKeyboardMarkup(
         [KeyboardButton(text=BTN_ABOUT), KeyboardButton(text=BTN_CHANNELS)],
         [KeyboardButton(text=BTN_CONTACT), KeyboardButton(text=BTN_FEEDBACK)],
         [KeyboardButton(text=BTN_ORALIQ), KeyboardButton(text=BTN_STREAK)],
-        [KeyboardButton(text=BTN_RATING)],
+        [KeyboardButton(text=BTN_RATING), KeyboardButton(text=BTN_LEXICON)],
     ],
     resize_keyboard=True,
 )
@@ -1049,6 +1052,161 @@ async def on_rating(cb: CallbackQuery):
     except Exception:
         pass   # matn o'zgarmagan bo'lsa Telegram xato beradi, bu normal
     await cb.answer()
+
+
+# ---------- Lotincha lug'at (qidiruv + inline rejim) ----------
+
+def _load_lex():
+    try:
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "lugat.json")
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)["t"]
+    except Exception as e:
+        print("lugat.json yuklanmadi:", e)
+        return []
+
+
+def _lx_norm(s):
+    s = (s or "").lower().replace("ё", "е")
+    for ch in "'‘’ʻʼ`´":
+        s = s.replace(ch, "")
+    return " ".join(s.split())
+
+
+LEX = _load_lex()
+LEX_FIELDS = [
+    [
+        _lx_norm(re.sub(r"\([^)]*\)", " ", x["l"])),
+        _lx_norm(x["l"]),
+        _lx_norm(x["u"]),
+        _lx_norm(x["r"]),
+        _lx_norm(x["e"]),
+    ]
+    for x in LEX
+]
+lexicon_mode = {}   # foydalanuvchi -> lug'at rejimi tugash vaqti
+
+
+def lx_search(query, limit=8):
+    q = _lx_norm(query)
+    if len(q) < 2:
+        return []
+    toks = q.split()
+    scored = []
+    for i, fields in enumerate(LEX_FIELDS):
+        best = 0
+        for k, f in enumerate(fields):
+            if not f:
+                continue
+            words = f.split()
+            if f == q:
+                sc = 100
+            elif f.startswith(q):
+                sc = 80
+            elif any(w.startswith(q) for w in words):
+                sc = 60
+            elif all(any(w.startswith(t) for w in words) for t in toks):
+                sc = 50
+            elif q in f:
+                sc = 30
+            else:
+                sc = 0
+            if sc and k < 2:
+                sc += 5   # lotincha moslik biroz yuqoriroq
+            best = max(best, sc)
+        if best:
+            scored.append((best, len(LEX[i]["l"]), i))
+    scored.sort(key=lambda t: (-t[0], t[1]))
+    return [i for _, _, i in scored[:limit]]
+
+
+def lx_card(i):
+    x = LEX[i]
+    title = x["l"][:1].upper() + x["l"][1:]
+    lines = [f"📚 {title} · {x['f']}", x["p"], "", f"UZ  {x['u']}"]
+    if x["r"]:
+        lines.append(f"RU  {x['r']}")
+    if x["e"]:
+        lines.append(f"EN  {x['e']}")
+    if x["t"]:
+        lines += ["", f"🧩 Tarkibi: {x['t']}"]
+    return "\n".join(lines)
+
+
+def lx_kb(ids):
+    rows = [
+        [InlineKeyboardButton(text=f"{LEX[i]['l']} · {LEX[i]['u']}"[:60], callback_data=f"lx:{i}")]
+        for i in ids
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+LEX_HINT = (
+    "📚 Lotincha lug'at\n\n"
+    "Atamani yozing: lotincha, o'zbekcha, ruscha yoki inglizcha.\n"
+    "Masalan: epit, yurak, печень, liver\n\n"
+    "Boshqa bo'limga o'tish uchun pastdagi menyudan tugmani bosing.\n"
+    "Istalgan chatda ham ishlaydi: @Talaba_Med_bot epit"
+)
+
+
+def _menu_texts():
+    return {v for k, v in globals().items() if k.startswith("BTN_") and isinstance(v, str)}
+
+
+def _in_lex_mode(m):
+    uid = m.from_user.id if m.from_user else None
+    if not uid or not m.text or m.text.startswith("/"):
+        return False
+    if lexicon_mode.get(uid, 0) < time.time() or uid in feedback_mode:
+        return False
+    return m.text not in _menu_texts()
+
+
+@dp.message(F.text == BTN_LEXICON)
+async def btn_lexicon(msg: Message):
+    feedback_mode.pop(msg.from_user.id, None)
+    lexicon_mode[msg.from_user.id] = time.time() + 900
+    await msg.answer(LEX_HINT)
+
+
+@dp.message(_in_lex_mode)
+async def on_lex_text(msg: Message):
+    lexicon_mode[msg.from_user.id] = time.time() + 900
+    ids = lx_search(msg.text)
+    if not ids:
+        await msg.answer("Hech narsa topilmadi. Atamaning boshlanishini yozib ko'ring (masalan: epit).")
+    elif len(ids) == 1:
+        await msg.answer(lx_card(ids[0]))
+    else:
+        await msg.answer(f"Topildi: {len(ids)} ta. Birini tanlang:", reply_markup=lx_kb(ids))
+
+
+@dp.callback_query(F.data.startswith("lx:"))
+async def on_lex_pick(cb: CallbackQuery):
+    try:
+        i = int(cb.data.split(":")[1])
+        text = lx_card(i)
+    except Exception:
+        await cb.answer()
+        return
+    await cb.message.answer(text)
+    await cb.answer()
+
+
+@dp.inline_query()
+async def on_inline(q: InlineQuery):
+    ids = lx_search(q.query, limit=20)
+    results = [
+        InlineQueryResultArticle(
+            id=str(i),
+            title=f"{LEX[i]['l']} · {LEX[i]['u']}"[:100],
+            description=" · ".join(x for x in (LEX[i]["r"], LEX[i]["e"]) if x)[:100],
+            input_message_content=InputTextMessageContent(message_text=lx_card(i)),
+        )
+        for i in ids
+    ]
+    await q.answer(results, cache_time=300, is_personal=False)
 
 
 # ---------- Oraliqlar (PDF fayllar) ----------
