@@ -1263,6 +1263,162 @@ async def on_inline(q: InlineQuery):
     await q.answer(results, cache_time=300, is_personal=False)
 
 
+# ---------- Kun atamasi (09:00 dan 22:00 gacha, har soatda) ----------
+
+TERM_FIRST, TERM_LAST = 9, 22
+TERM_SLOTS = TERM_LAST - TERM_FIRST + 1
+TERM_ORDER = list(range(len(LEX)))
+random.Random(20261015).shuffle(TERM_ORDER)
+TERM_STEPS = {1: "Har soat (09:00-22:00)", 3: "Har 3 soatda", 24: "Kuniga 1 marta (13:00)", 0: "O'chirilgan"}
+
+
+def term_for(day, hour):
+    """Bu soat uchun atama: hamma uchun bir xil, aylanib takrorlanadi."""
+    return TERM_ORDER[(day.toordinal() * TERM_SLOTS + (hour - TERM_FIRST)) % len(TERM_ORDER)]
+
+
+def term_due(step, hour):
+    return step == 1 or (step == 3 and hour in (9, 12, 15, 18, 21)) or (step == 24 and hour == 13)
+
+
+def term_kb(i):
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📚 Lug'atda ochish",
+                              web_app=WebAppInfo(url=f"{LEX_URL}?l={quote(LEX[i]['l'])}"))],
+        [InlineKeyboardButton(text="⚙️ Xabarlar chastotasi", callback_data=f"tps:{i}")],
+    ])
+
+
+def term_settings_kb(i):
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Har soat", callback_data=f"tp:1:{i}"),
+         InlineKeyboardButton(text="Har 3 soatda", callback_data=f"tp:3:{i}")],
+        [InlineKeyboardButton(text="Kuniga 1 marta", callback_data=f"tp:24:{i}"),
+         InlineKeyboardButton(text="O'chirish", callback_data=f"tp:0:{i}")],
+        [InlineKeyboardButton(text="« Orqaga", callback_data=f"tpb:{i}")],
+    ])
+
+
+async def term_prefs():
+    """Standart (har soat) emas, boshqa tanlov qilgan foydalanuvchilar: {user_id: step}."""
+    out, offset = {}, 0
+    try:
+        while True:
+            async with aiohttp.ClientSession() as s:
+                async with s.get(
+                    f"{SUPABASE_URL}/rest/v1/term_prefs?select=user_id,step&step=neq.1"
+                    f"&order=user_id.asc&limit=1000&offset={offset}",
+                    headers=db_headers(), timeout=aiohttp.ClientTimeout(total=15),
+                ) as r:
+                    rows = await r.json() if r.status < 300 else []
+            for x in rows:
+                out[x["user_id"]] = x["step"]
+            if len(rows) < 1000:
+                break
+            offset += 1000
+    except Exception as e:
+        print("term_prefs xatosi:", e)
+    return out
+
+
+async def term_set(uid, step):
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.post(
+                f"{SUPABASE_URL}/rest/v1/term_prefs?on_conflict=user_id",
+                headers=db_headers({"Prefer": "resolution=merge-duplicates,return=minimal"}),
+                json={"user_id": uid, "step": step},
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as r:
+                if r.status >= 300:
+                    print("term_set xato:", r.status, await r.text())
+                    return False
+                return True
+    except Exception as e:
+        print("term_set xatosi:", e)
+        return False
+
+
+async def term_send(uid, i, hour, silent=True):
+    await bot.send_message(
+        uid, f"💡 Atama · {hour:02d}:00\n\n" + lx_card(i),
+        reply_markup=term_kb(i), disable_notification=silent,
+    )
+
+
+@dp.message(Command("atama"))
+async def cmd_term(msg: Message):
+    """Hozirgi atamani so'rash va xabarlar chastotasini o'zgartirish."""
+    if not LEX:
+        return
+    hour = min(max(datetime.now(TZ).hour, TERM_FIRST), TERM_LAST)
+    await term_send(msg.from_user.id, term_for(datetime.now(TZ).date(), hour), hour, silent=False)
+
+
+@dp.callback_query(F.data.startswith("tps:"))
+async def on_term_settings(cb: CallbackQuery):
+    try:
+        i = int(cb.data.split(":")[1])
+        await cb.message.edit_reply_markup(reply_markup=term_settings_kb(i))
+    except Exception:
+        pass
+    await cb.answer()
+
+
+@dp.callback_query(F.data.startswith("tpb:"))
+async def on_term_back(cb: CallbackQuery):
+    try:
+        i = int(cb.data.split(":")[1])
+        await cb.message.edit_reply_markup(reply_markup=term_kb(i))
+    except Exception:
+        pass
+    await cb.answer()
+
+
+@dp.callback_query(F.data.startswith("tp:"))
+async def on_term_pick(cb: CallbackQuery):
+    try:
+        _, st, i = cb.data.split(":")
+        st, i = int(st), int(i)
+        assert st in TERM_STEPS
+    except Exception:
+        await cb.answer()
+        return
+    if not await term_set(cb.from_user.id, st):
+        await cb.answer("Hozir saqlab bo'lmadi. Keyinroq urinib ko'ring.", show_alert=True)
+        return
+    try:
+        await cb.message.edit_reply_markup(reply_markup=term_kb(i))
+    except Exception:
+        pass
+    extra = " Qayta yoqish uchun /atama ni bosing." if st == 0 else ""
+    await cb.answer(f"Saqlandi: {TERM_STEPS[st]}.{extra}", show_alert=(st == 0))
+
+
+async def term_loop():
+    """Har soat boshida (09:00-22:00, Toshkent) obunadagilarga bitta atama yuboradi (ovozsiz)."""
+    while True:
+        now = datetime.now(TZ)
+        nxt = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+        await asyncio.sleep((nxt - now).total_seconds())
+        hour = nxt.hour
+        if not (TERM_FIRST <= hour <= TERM_LAST) or not LEX or not SUPABASE_URL or not SUPABASE_KEY:
+            continue
+        try:
+            prefs = await term_prefs()
+            i = term_for(nxt.date(), hour)
+            for uid in await qotd_users():
+                if not term_due(prefs.get(uid, 1), hour):
+                    continue
+                try:
+                    await term_send(uid, i, hour)
+                except Exception as e:
+                    print("Atama yuborilmadi:", uid, e)
+                await asyncio.sleep(0.06)
+        except Exception as e:
+            print("term_loop xatosi:", e)
+
+
 # ---------- Oraliqlar (PDF fayllar) ----------
 
 file_cache = {}   # fayl nomi -> Telegram file_id (qayta yuklamaslik uchun)
@@ -1664,6 +1820,7 @@ async def main():
     asyncio.create_task(sweep_loop())
     asyncio.create_task(streak_reminder_loop())
     asyncio.create_task(qotd_loop())
+    asyncio.create_task(term_loop())
     await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
 
 
