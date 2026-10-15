@@ -739,6 +739,12 @@ def qotd_keyboard(p):
     return InlineKeyboardMarkup(inline_keyboard=[row])
 
 
+def qotd_refresh_kb(day):
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="🔄 Natijani yangilash", callback_data=f"qr:{day}")
+    ]])
+
+
 def qotd_result_text(p, my_pos, counts):
     total = sum(counts)
     lines = qotd_head(p)
@@ -748,7 +754,7 @@ def qotd_result_text(p, my_pos, counts):
         you = "  ← siz" if i == my_pos else ""
         lines.append(f"{LETTERS[i]}) {mark}{o}")
         lines.append(f"      {pct}% ({counts[i]}){you}")
-    lines += ["", f"Jami {total} kishi javob berdi", ""]
+    lines += ["", f"Jami {total} kishi javob berdi (soat {datetime.now(TZ):%H:%M} holatiga)", ""]
     right = LETTERS[p["correct"]]
     if my_pos == p["correct"]:
         lines.append("✅ To'g'ri!")
@@ -861,7 +867,7 @@ async def on_qotd_answer(cb: CallbackQuery):
             my_pos = prev
     counts = await vote_counts(d, len(p["opts"]))
     try:
-        await cb.message.edit_text(qotd_result_text(p, my_pos, counts), reply_markup=None)
+        await cb.message.edit_text(qotd_result_text(p, my_pos, counts), reply_markup=qotd_refresh_kb(d))
     except Exception as e:
         print("qotd edit xatosi:", e)
     await cb.answer("✅ To'g'ri!" if my_pos == p["correct"] else "❌ Xato")
@@ -873,6 +879,27 @@ async def on_qotd_answer(cb: CallbackQuery):
                 await bot.send_message(uid, v["message"])
             except Exception as e:
                 print("Seriya xabari yuborilmadi:", uid, e)
+
+
+@dp.callback_query(F.data.startswith("qr:"))
+async def on_qotd_refresh(cb: CallbackQuery):
+    """Natijani yangilash: javob bergandan keyin boshqalar nechta belgilaganini ko'rsatadi."""
+    try:
+        d = int(cb.data.split(":")[1])
+        p = qotd_for(d)
+    except Exception:
+        await cb.answer()
+        return
+    my_pos = await vote_get(d, cb.from_user.id)
+    if my_pos is None or my_pos >= len(p["opts"]):
+        await cb.answer("Avval savolga javob bering.", show_alert=True)
+        return
+    counts = await vote_counts(d, len(p["opts"]))
+    try:
+        await cb.message.edit_text(qotd_result_text(p, my_pos, counts), reply_markup=qotd_refresh_kb(d))
+        await cb.answer("Yangilandi")
+    except Exception:
+        await cb.answer("Hozircha yangi javob yo'q.")
 
 
 @dp.message(Command("qotd"))
