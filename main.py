@@ -24,6 +24,7 @@ TOKEN = "".join(os.environ["BOT_TOKEN"].split())
 
 SITE_URL = "https://demirbek411-ops.github.io/TalabaMed-site/"
 LEX_URL = SITE_URL.rstrip("/") + "/lugat.html"   # Lotincha lug'at oynasi (mini ilova)
+NATIJA_URL = SITE_URL.rstrip("/") + "/natija.html"   # Mening natijam oynasi
 SITE_ORIGIN = "https://demirbek411-ops.github.io"
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "").strip().rstrip("/")
@@ -67,6 +68,7 @@ BTN_BACK = "⬅️ Orqaga"
 BTN_STREAK = "🔥 Seriyam"
 BTN_RATING = "🏆 Reyting"
 BTN_LEXICON = "📚 Lotincha lug'at"
+BTN_MYSTATS = "📊 Mening natijam"
 
 ORALIQ_PREFIX = "oraliq_"      # PDF fayl nomi shu so'z bilan boshlanishi kerak
 FILE_PREFIX = "📄 "
@@ -78,6 +80,7 @@ MENU = ReplyKeyboardMarkup(
         [KeyboardButton(text=BTN_CONTACT), KeyboardButton(text=BTN_FEEDBACK)],
         [KeyboardButton(text=BTN_ORALIQ), KeyboardButton(text=BTN_STREAK)],
         [KeyboardButton(text=BTN_RATING), KeyboardButton(text=BTN_LEXICON, web_app=WebAppInfo(url=LEX_URL))],
+        [KeyboardButton(text=BTN_MYSTATS)],
     ],
     resize_keyboard=True,
 )
@@ -1421,6 +1424,125 @@ async def term_loop():
             print("term_loop xatosi:", e)
 
 
+# ---------- Zaif mavzular tahlili ----------
+
+def _load_topics():
+    try:
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "topics.json")
+        with open(path, encoding="utf-8") as f:
+            d = json.load(f)
+        return d["names"], d["map"]
+    except Exception as e:
+        print("topics.json yuklanmadi:", e)
+        return {}, {}
+
+
+TOPIC_NAMES, TOPIC_MAP = _load_topics()   # mavzu nomlari; savol xeshi -> mavzu kaliti
+TOPIC_MIN = 5                              # mavzu baholanishi uchun kamida shuncha javob
+
+
+async def topic_add(uid, topic, n, c):
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.post(
+                f"{SUPABASE_URL}/rest/v1/rpc/topic_add",
+                headers=db_headers(),
+                json={"p_user": uid, "p_topic": topic, "p_n": n, "p_c": c},
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as r:
+                if r.status >= 300:
+                    print("topic_add xato:", r.status, await r.text())
+    except Exception as e:
+        print("topic_add xatosi:", e)
+
+
+async def topic_rows(uid):
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.get(
+                f"{SUPABASE_URL}/rest/v1/topic_stats?select=topic,answered,correct&user_id=eq.{uid}",
+                headers=db_headers(), timeout=aiohttp.ClientTimeout(total=10),
+            ) as r:
+                if r.status >= 300:
+                    print("topic_rows xato:", r.status, await r.text())
+                    return None
+                return await r.json()
+    except Exception as e:
+        print("topic_rows xatosi:", e)
+        return None
+
+
+def topic_bar(pc):
+    filled = round(pc / 10)
+    sq = "🟥" if pc < 60 else ("🟧" if pc < 80 else "🟩")
+    return sq * filled + "⬜" * (10 - filled)
+
+
+def mystats_view(rows):
+    """(xabar matni, zaif seminar mavzu raqami yoki None)"""
+    ev = sorted(
+        ((r["correct"] / r["answered"], r) for r in rows if r["answered"] >= TOPIC_MIN),
+        key=lambda t: t[0],
+    )
+    if not ev:
+        return (
+            "📊 Mening natijam\n\nHali yetarli ma'lumot yo'q. Saytda test yeching: "
+            f"har mavzudan kamida {TOPIC_MIN} ta javob bergach tahlil shu yerda chiqadi.",
+            None,
+        )
+    lines = ["📊 Mening natijam", "Eng zaif mavzular:", ""]
+    for p, r in ev[:5]:
+        pc = round(100 * p)
+        lines.append(f"{TOPIC_NAMES.get(r['topic'], r['topic'])}\n{topic_bar(pc)} {pc}% ({r['correct']}/{r['answered']})")
+    p0, r0 = ev[0]
+    pc0 = round(100 * p0)
+    weak = None
+    name = TOPIC_NAMES.get(r0["topic"], r0["topic"])
+    if pc0 < 80:
+        if r0["topic"].startswith("T"):
+            lines += ["", f"Eng zaif: {name} ({pc0}%). Shu mavzudan 30 ta test tavsiya etiladi."]
+            weak = r0["topic"][1:]
+        else:
+            lines += ["", f"Eng zaif: {name} ({pc0}%). Shu fanni takrorlash tavsiya etiladi."]
+    else:
+        lines += ["", "Hamma mavzularda natijangiz yaxshi (80% dan yuqori). Davom eting!"]
+    return "\n".join(lines), weak
+
+
+@dp.message(F.text == BTN_MYSTATS)
+async def btn_mystats(msg: Message):
+    feedback_mode.pop(msg.from_user.id, None)
+    rows = await topic_rows(msg.from_user.id)
+    if rows is None:
+        await msg.answer("Natijani hozir ko'rsatib bo'lmadi. Keyinroq urinib ko'ring.")
+        return
+    text, weak = mystats_view(rows)
+    kb = []
+    if weak:
+        kb.append([InlineKeyboardButton(text="🎯 Zaif mavzudan 30 ta test",
+                                        web_app=WebAppInfo(url=f"{SITE_URL}?weak={weak}"))])
+    kb.append([InlineKeyboardButton(text="📊 To'liq natija (oyna)", web_app=WebAppInfo(url=NATIJA_URL))])
+    await msg.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+
+
+async def api_mystats(request):
+    """Sayt oynasi uchun: foydalanuvchining mavzular bo'yicha natijalari."""
+    if request.method == "OPTIONS":
+        return web.Response()
+    user, body, err = await _streak_user(request)
+    if err:
+        return err
+    rows = await topic_rows(user["id"])
+    if rows is None:
+        return web.json_response({"ok": False, "error": "db"}, status=500)
+    items = [
+        {"topic": r["topic"], "name": TOPIC_NAMES.get(r["topic"], r["topic"]),
+         "answered": r["answered"], "correct": r["correct"]}
+        for r in rows
+    ]
+    return web.json_response({"ok": True, "items": items})
+
+
 # ---------- Oraliqlar (PDF fayllar) ----------
 
 file_cache = {}   # fayl nomi -> Telegram file_id (qayta yuklamaslik uchun)
@@ -1687,6 +1809,15 @@ async def api_answer(request):
             return web.json_response({"ok": False, "error": "db"}, status=500)
     counted = len(new)
     correct = sum(1 for _, ok in new if ok)
+    agg = {}
+    for qh_, ok_ in new:   # mavzular bo'yicha hisob (zaif mavzular tahlili uchun)
+        t_ = TOPIC_MAP.get(qh_)
+        if t_:
+            a_ = agg.setdefault(t_, [0, 0])
+            a_[0] += 1
+            a_[1] += 1 if ok_ else 0
+    for t_, (n_, c_) in agg.items():
+        await topic_add(uid, t_, n_, c_)
     if not counted:
         view["just_completed"] = False
         return web.json_response({"ok": True, "counted": 0, "unknown": unknown, "capped": allowed == 0, **view})
@@ -1815,6 +1946,7 @@ async def main():
     app.router.add_get("/", health)
     app.router.add_route("*", "/api/check", api_check)
     app.router.add_route("*", "/api/answer", api_answer)
+    app.router.add_route("*", "/api/mystats", api_mystats)
     app.router.add_route("*", "/api/streak", api_streak)
     runner = web.AppRunner(app)
     await runner.setup()
