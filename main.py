@@ -1182,6 +1182,8 @@ def lx_card(i):
         lines.append(f"RU  {x['r']}")
     if x["e"]:
         lines.append(f"EN  {x['e']}")
+    if x.get("d"):
+        lines += ["", f"📖 {x['d']}"]
     if x["t"]:
         lines += ["", f"🧩 Tarkibi: {x['t']}"]
     return "\n".join(lines)
