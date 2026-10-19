@@ -10,7 +10,7 @@ from datetime import datetime, timezone, timedelta
 from urllib.parse import parse_qsl, quote
 import aiohttp
 from aiohttp import web
-from aiogram import Bot, Dispatcher, F
+from aiogram import Bot, Dispatcher, F, BaseMiddleware
 from aiogram.filters import CommandStart, Command
 from aiogram.types import (
     Message, CallbackQuery, FSInputFile,
@@ -276,6 +276,8 @@ async def on_member_change(ev: ChatMemberUpdated):
         uid = ev.new_chat_member.user.id
         flag = await get_flag(uid)
         await recheck_user(uid, flag)
+        if new == "left" and flag is True:
+            await handle_leave(uid)
 
 
 async def sweep_once():
@@ -1543,6 +1545,203 @@ async def api_mystats(request):
     return web.json_response({"ok": True, "items": items})
 
 
+# ---------- Kanaldan ko'p chiqib ketganlarni vaqtincha bloklash ----------
+
+MAX_LEAVES = 3          # shuncha martagacha chiqish mumkin; undan ko'p bo'lsa blok
+BLOCK_DAYS = 7          # blok muddati (kun)
+LEAVE_FORGET_DAYS = 30  # shu muddatdan oldingi chiqishlar hisobga olinmaydi
+UZ_MONTHS = ["yanvar", "fevral", "mart", "aprel", "may", "iyun", "iyul", "avgust",
+             "sentabr", "oktabr", "noyabr", "dekabr"]
+blk_cache = {}          # user_id -> (blok_tugashi yoki None, tekshirilgan vaqt)
+
+
+def _parse_ts(v):
+    if not v:
+        return None
+    try:
+        return datetime.fromisoformat(str(v).replace("Z", "+00:00"))
+    except Exception:
+        return None
+
+
+def fmt_until(dt):
+    t = dt.astimezone(TZ)
+    return f"{t.day}-{UZ_MONTHS[t.month - 1]}, {t:%H:%M}"
+
+
+def block_text(until):
+    return (
+        "⛔ Bot vaqtincha bloklandi\n\n"
+        f"Siz majburiy kanallardan {MAX_LEAVES} martadan ko'p chiqib ketdingiz. "
+        f"Shu sababli botdan foydalanish {BLOCK_DAYS} kunga cheklandi.\n"
+        f"Blok tugaydi: {fmt_until(until)} (Toshkent vaqti)\n\n"
+        "Blok tugagach kanallarga obuna bo'lib, botdan yana foydalanishingiz mumkin."
+    )
+
+
+async def _blk_row(uid):
+    """(qator, xato) : qator dict yoki {}, xato bo'lsa None."""
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.get(
+                f"{SUPABASE_URL}/rest/v1/user_blocks?select=*&user_id=eq.{uid}",
+                headers=db_headers(), timeout=aiohttp.ClientTimeout(total=10),
+            ) as r:
+                if r.status >= 300:
+                    print("user_blocks o'qish xato:", r.status, await r.text())
+                    return None
+                rows = await r.json()
+                return rows[0] if rows else {}
+    except Exception as e:
+        print("user_blocks xatosi:", e)
+        return None
+
+
+async def _blk_save(row):
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.post(
+                f"{SUPABASE_URL}/rest/v1/user_blocks?on_conflict=user_id",
+                headers=db_headers({"Prefer": "resolution=merge-duplicates,return=minimal"}),
+                json=row, timeout=aiohttp.ClientTimeout(total=10),
+            ) as r:
+                if r.status >= 300:
+                    print("user_blocks yozish xato:", r.status, await r.text())
+                    return False
+                return True
+    except Exception as e:
+        print("user_blocks yozish xatosi:", e)
+        return False
+
+
+async def block_until(uid):
+    """Foydalanuvchi bloklangan bo'lsa blok tugash vaqtini (aware datetime), aks holda None."""
+    if uid == ADMIN_ID or not SUPABASE_URL or not SUPABASE_KEY:
+        return None
+    now = time.time()
+    hit = blk_cache.get(uid)
+    if hit and now - hit[1] < 90:
+        until = hit[0]
+    else:
+        row = await _blk_row(uid)
+        if row is None:
+            return None          # baza xatosi: foydalanuvchini bloklamaymiz
+        until = _parse_ts(row.get("blocked_until"))
+        blk_cache[uid] = (until, now)
+    if until and until > datetime.now(timezone.utc):
+        return until
+    return None
+
+
+async def register_leave(uid):
+    """Chiqishni hisoblaydi. (chiqishlar soni, blok tugashi yoki None) qaytaradi."""
+    row = await _blk_row(uid)
+    if row is None:
+        return None, None
+    now = datetime.now(timezone.utc)
+    last = _parse_ts(row.get("last_leave"))
+    leaves = row.get("leaves") or 0
+    if last and (now - last).total_seconds() < 600:
+        return leaves, None                      # bir necha kanaldan birdaniga chiqish: bitta hisoblanadi
+    if last and (now - last).days >= LEAVE_FORGET_DAYS:
+        leaves = 0
+    leaves += 1
+    until = None
+    new = {"user_id": uid, "last_leave": now.isoformat(), "leaves": leaves}
+    if leaves > MAX_LEAVES:
+        until = now + timedelta(days=BLOCK_DAYS)
+        new["blocked_until"] = until.isoformat()
+        new["leaves"] = 0
+        leaves = 0
+    await _blk_save(new)
+    if until:
+        blk_cache[uid] = (until, time.time())
+    return leaves, until
+
+
+async def handle_leave(uid):
+    """Kanaldan chiqqan foydalanuvchiga hisob yoki blok haqida xabar beradi."""
+    leaves, until = await register_leave(uid)
+    try:
+        if until:
+            await bot.send_message(uid, block_text(until))
+        elif leaves:
+            await bot.send_message(
+                uid,
+                f"⚠️ Kanallardan chiqish: {leaves}/{MAX_LEAVES}. "
+                f"{MAX_LEAVES} martadan ko'p chiqsangiz, bot {BLOCK_DAYS} kunga bloklanadi.",
+            )
+    except Exception as e:
+        print("Blok xabari yuborilmadi:", uid, e)
+
+
+class BlockMiddleware(BaseMiddleware):
+    async def __call__(self, handler, event, data):
+        user = getattr(event, "from_user", None)
+        if user and user.id != ADMIN_ID:
+            until = await block_until(user.id)
+            if until:
+                try:
+                    if isinstance(event, CallbackQuery):
+                        await event.answer(f"⛔ Bot {fmt_until(until)} gacha bloklangan.", show_alert=True)
+                    elif isinstance(event, InlineQuery):
+                        await event.answer([], cache_time=5)
+                    else:
+                        await event.answer(block_text(until))
+                except Exception:
+                    pass
+                return None
+        return await handler(event, data)
+
+
+dp.message.outer_middleware(BlockMiddleware())
+dp.callback_query.outer_middleware(BlockMiddleware())
+dp.inline_query.outer_middleware(BlockMiddleware())
+
+
+@dp.message(Command("unblock"))
+async def cmd_unblock(msg: Message):
+    """Admin: /unblock <user_id> : blokni olib tashlaydi."""
+    if msg.from_user.id != ADMIN_ID:
+        return
+    parts = (msg.text or "").split()
+    if len(parts) != 2 or not parts[1].isdigit():
+        await msg.answer("Foydalanish: /unblock 123456789")
+        return
+    uid = int(parts[1])
+    ok = await _blk_save({"user_id": uid, "blocked_until": None, "leaves": 0})
+    blk_cache.pop(uid, None)
+    await msg.answer("Blok olib tashlandi." if ok else "Xato: bazaga yozib bo'lmadi.")
+
+
+@dp.message(Command("blocked"))
+async def cmd_blocked(msg: Message):
+    """Admin: hozir bloklanganlar ro'yxati."""
+    if msg.from_user.id != ADMIN_ID:
+        return
+    try:
+        now = datetime.now(timezone.utc).isoformat()
+        async with aiohttp.ClientSession() as s:
+            async with s.get(
+                f"{SUPABASE_URL}/rest/v1/user_blocks?select=user_id,blocked_until&blocked_until=gt.{quote(now)}"
+                "&order=blocked_until.desc&limit=30",
+                headers=db_headers(), timeout=aiohttp.ClientTimeout(total=10),
+            ) as r:
+                rows = await r.json() if r.status < 300 else []
+    except Exception as e:
+        await msg.answer(f"Xato: {e}")
+        return
+    if not rows:
+        await msg.answer("Hozir bloklangan foydalanuvchi yo'q.")
+        return
+    lines = [f"⛔ Bloklanganlar: {len(rows)} ta (30 tagacha)"]
+    for x in rows:
+        until = _parse_ts(x["blocked_until"])
+        lines.append(f"{x['user_id']} · {fmt_until(until)} gacha" if until else str(x["user_id"]))
+    lines.append("\nBlokdan chiqarish: /unblock ID")
+    await msg.answer("\n".join(lines))
+
+
 # ---------- Oraliqlar (PDF fayllar) ----------
 
 file_cache = {}   # fayl nomi -> Telegram file_id (qayta yuklamaslik uchun)
@@ -1700,6 +1899,9 @@ async def api_check(request):
     user = user_from_init_data(body.get("initData", ""))
     if not user:
         return web.json_response({"ok": False, "error": "invalid"}, status=403)
+    until = await block_until(user["id"])
+    if until:
+        return web.json_response({"ok": False, "blocked": True, "until": until.isoformat(), "missing": []})
     left = await not_subscribed(user["id"])
     await save_user(user["id"], user.get("first_name"), user.get("username"), not left)
     missing = [{"name": n, "url": f"https://t.me/{u[1:]}"} for n, u in left]
@@ -1715,6 +1917,8 @@ async def _streak_user(request):
     user = user_from_init_data(body.get("initData", ""))
     if not user:
         return None, None, web.json_response({"ok": False, "error": "invalid"}, status=403)
+    if await block_until(user["id"]):
+        return None, None, web.json_response({"ok": False, "error": "blocked"}, status=403)
     return user, body, None
 
 
