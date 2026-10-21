@@ -276,8 +276,11 @@ async def on_member_change(ev: ChatMemberUpdated):
         uid = ev.new_chat_member.user.id
         flag = await get_flag(uid)
         await recheck_user(uid, flag)
-        if new == "left" and flag is True:
+        if new == "left":
             await handle_leave(uid)
+    elif old in ("left", "kicked") and new in ("member", "administrator", "creator", "restricted"):
+        uid = ev.new_chat_member.user.id
+        await recheck_user(uid, await get_flag(uid))   # hammasiga qayta obuna bo'lgan bo'lsa, holat yangilanadi
 
 
 async def sweep_once():
@@ -1553,6 +1556,7 @@ LEAVE_FORGET_DAYS = 30  # shu muddatdan oldingi chiqishlar hisobga olinmaydi
 UZ_MONTHS = ["yanvar", "fevral", "mart", "aprel", "may", "iyun", "iyul", "avgust",
              "sentabr", "oktabr", "noyabr", "dekabr"]
 blk_cache = {}          # user_id -> (blok_tugashi yoki None, tekshirilgan vaqt)
+_leave_alert_ts = 0.0
 
 
 def _parse_ts(v):
@@ -1571,11 +1575,11 @@ def fmt_until(dt):
 
 def block_text(until):
     return (
-        "⛔ Bot vaqtincha bloklandi\n\n"
-        f"Siz majburiy kanallardan {MAX_LEAVES} martadan ko'p chiqib ketdingiz. "
-        f"Shu sababli botdan foydalanish {BLOCK_DAYS} kunga cheklandi.\n"
-        f"Blok tugaydi: {fmt_until(until)} (Toshkent vaqti)\n\n"
-        "Blok tugagach kanallarga obuna bo'lib, botdan yana foydalanishingiz mumkin."
+        "⛔ Sizda cheklov bor\n\n"
+        f"Siz majburiy kanallardan {MAX_LEAVES} martadan ko'p chiqib ketdingiz, "
+        f"shuning uchun botdan foydalanish {BLOCK_DAYS} kunga cheklandi.\n"
+        f"Muddat tugashini kuting: {fmt_until(until)} (Toshkent vaqti)\n\n"
+        "Muddat tugagach kanallarga obuna bo'lib, botdan yana foydalanishingiz mumkin."
     )
 
 
@@ -1616,7 +1620,7 @@ async def _blk_save(row):
 
 async def block_until(uid):
     """Foydalanuvchi bloklangan bo'lsa blok tugash vaqtini (aware datetime), aks holda None."""
-    if uid == ADMIN_ID or not SUPABASE_URL or not SUPABASE_KEY:
+    if not SUPABASE_URL or not SUPABASE_KEY:
         return None
     now = time.time()
     hit = blk_cache.get(uid)
@@ -1641,8 +1645,8 @@ async def register_leave(uid):
     now = datetime.now(timezone.utc)
     last = _parse_ts(row.get("last_leave"))
     leaves = row.get("leaves") or 0
-    if last and (now - last).total_seconds() < 600:
-        return leaves, None                      # bir necha kanaldan birdaniga chiqish: bitta hisoblanadi
+    if last and (now - last).total_seconds() < 30:
+        return leaves, None                      # 3 kanaldan birdaniga chiqish: bitta hisoblanadi
     if last and (now - last).days >= LEAVE_FORGET_DAYS:
         leaves = 0
     leaves += 1
@@ -1662,6 +1666,19 @@ async def register_leave(uid):
 async def handle_leave(uid):
     """Kanaldan chiqqan foydalanuvchiga hisob yoki blok haqida xabar beradi."""
     leaves, until = await register_leave(uid)
+    print(f"chiqish: uid={uid} hisob={leaves} blok={until}")
+    if leaves is None and until is None:   # baza xatosi (masalan, user_blocks jadvali yo'q)
+        global _leave_alert_ts
+        if time.time() - _leave_alert_ts > 1800:
+            _leave_alert_ts = time.time()
+            try:
+                await bot.send_message(
+                    ADMIN_ID,
+                    "⚠️ Chiqishni hisoblab bo'lmadi: user_blocks jadvaliga yozib/o'qib bo'lmadi. "
+                    "Jadval yaratilganini va Render loglarini tekshiring (`user_blocks` qatori).",
+                )
+            except Exception:
+                pass
     try:
         if until:
             await bot.send_message(uid, block_text(until))
@@ -1678,12 +1695,13 @@ async def handle_leave(uid):
 class BlockMiddleware(BaseMiddleware):
     async def __call__(self, handler, event, data):
         user = getattr(event, "from_user", None)
-        if user and user.id != ADMIN_ID:
+        is_cmd = isinstance(event, Message) and (event.text or "").startswith("/")
+        if user and not (user.id == ADMIN_ID and is_cmd):   # admin buyruqlari doim ishlaydi
             until = await block_until(user.id)
             if until:
                 try:
                     if isinstance(event, CallbackQuery):
-                        await event.answer(f"⛔ Bot {fmt_until(until)} gacha bloklangan.", show_alert=True)
+                        await event.answer(f"⛔ Sizda cheklov bor. Muddatni kuting: {fmt_until(until)}", show_alert=True)
                     elif isinstance(event, InlineQuery):
                         await event.answer([], cache_time=5)
                     else:
@@ -1712,6 +1730,32 @@ async def cmd_unblock(msg: Message):
     ok = await _blk_save({"user_id": uid, "blocked_until": None, "leaves": 0})
     blk_cache.pop(uid, None)
     await msg.answer("Blok olib tashlandi." if ok else "Xato: bazaga yozib bo'lmadi.")
+
+
+@dp.message(Command("leaves"))
+async def cmd_leaves(msg: Message):
+    """Admin: /leaves <user_id> : chiqishlar hisobi va blok holatini ko'rsatadi."""
+    if msg.from_user.id != ADMIN_ID:
+        return
+    parts = (msg.text or "").split()
+    if len(parts) != 2 or not parts[1].isdigit():
+        await msg.answer("Foydalanish: /leaves 123456789")
+        return
+    uid = int(parts[1])
+    flag = await get_flag(uid)
+    row = await _blk_row(uid)
+    if row is None:
+        await msg.answer("user_blocks jadvalini o'qib bo'lmadi (jadval yaratilmagan bo'lishi mumkin).")
+        return
+    last = _parse_ts(row.get("last_leave"))
+    until = _parse_ts(row.get("blocked_until"))
+    await msg.answer(
+        f"Foydalanuvchi: {uid}\n"
+        f"Obuna holati (is_member): {flag}\n"
+        f"Chiqishlar hisobi: {row.get('leaves', 0)}/{MAX_LEAVES}\n"
+        f"Oxirgi chiqish: {fmt_until(last) if last else '-'}\n"
+        f"Blok tugashi: {fmt_until(until) if until else '-'}"
+    )
 
 
 @dp.message(Command("blocked"))
@@ -1745,6 +1789,24 @@ async def cmd_blocked(msg: Message):
 # ---------- Oraliqlar (PDF fayllar) ----------
 
 file_cache = {}   # fayl nomi -> Telegram file_id (qayta yuklamaslik uchun)
+
+# Faylga qo'shiladigan izoh (fan nomi kichik harflarda). Yoki repoga oraliq_<Fan>.txt qo'ying: shu matn olinadi.
+FILE_NOTES = {
+    "anatomiya": "Bu yakuniy savollari bo'lishi mumkin, oraliq bo'lmasa.",
+}
+
+
+def file_note(path, title):
+    txt = path[:-4] + ".txt"
+    try:
+        if os.path.exists(txt):
+            with open(txt, encoding="utf-8") as f:
+                t = f.read().strip()
+            if t:
+                return t[:500]
+    except Exception:
+        pass
+    return FILE_NOTES.get(title.strip().lower(), "")
 
 
 def oraliq_files():
@@ -1791,7 +1853,12 @@ async def btn_oraliq_file(msg: Message):
     if not path:
         await msg.answer("Bu fayl topilmadi. /menu ni bosib qayta urinib ko'ring.")
         return
-    caption = "📝 " + msg.text[len(FILE_PREFIX):] + " (oraliq)\n\nTALABA MED"
+    title = msg.text[len(FILE_PREFIX):]
+    note = file_note(path, title)
+    if note:
+        caption = f"📝 {title}\n\n⚠️ {note}\n\nTALABA MED"
+    else:
+        caption = f"📝 {title} (oraliq)\n\nTALABA MED"
     try:
         fid = file_cache.get(path)
         sent = await msg.answer_document(fid or FSInputFile(path), caption=caption, reply_markup=MENU, protect_content=True)
