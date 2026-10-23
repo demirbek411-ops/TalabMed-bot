@@ -73,7 +73,7 @@ BTN_STREAK = "🔥 Seriyam"
 BTN_RATING = "🏆 Reyting"
 BTN_LEXICON = "📚 Lotincha lug'at"
 BTN_MYSTATS = "📊 Mening natijam"
-BTN_QUIZ = "🧪 Quiz yaratish"
+BTN_QUIZ = "🧪 Test tuzish"
 
 ORALIQ_PREFIX = "oraliq_"      # PDF fayl nomi shu so'z bilan boshlanishi kerak
 FILE_PREFIX = "📄 "
@@ -81,11 +81,11 @@ FILE_PREFIX = "📄 "
 MENU = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text=BTN_APP), KeyboardButton(text=BTN_SCHEDULE)],
+        [KeyboardButton(text=BTN_LEXICON, web_app=WebAppInfo(url=LEX_URL)), KeyboardButton(text=BTN_QUIZ)],
+        [KeyboardButton(text=BTN_ORALIQ), KeyboardButton(text=BTN_STREAK)],
+        [KeyboardButton(text=BTN_MYSTATS), KeyboardButton(text=BTN_RATING)],
         [KeyboardButton(text=BTN_ABOUT), KeyboardButton(text=BTN_CHANNELS)],
         [KeyboardButton(text=BTN_CONTACT), KeyboardButton(text=BTN_FEEDBACK)],
-        [KeyboardButton(text=BTN_ORALIQ), KeyboardButton(text=BTN_STREAK)],
-        [KeyboardButton(text=BTN_RATING), KeyboardButton(text=BTN_LEXICON, web_app=WebAppInfo(url=LEX_URL))],
-        [KeyboardButton(text=BTN_MYSTATS), KeyboardButton(text=BTN_QUIZ)],
     ],
     resize_keyboard=True,
 )
@@ -2093,7 +2093,7 @@ qz_daily = {}      # (sana, user_id) -> yaratilgan testlar soni
 pending_qz = {}    # obuna bo'lgandan keyin ochiladigan havola
 
 QZ_HELP = (
-    "🧪 Quiz yaratish\n\n"
+    "🧪 Test tuzish\n\n"
     "Savollar faylini yuboring (.docx, .xlsx yoki .txt, 5 MB gacha). Matnni to'g'ridan-to'g'ri yozib yuborsangiz ham bo'ladi.\n\n"
     "Namuna:\n"
     "1. Hujayraning energiya markazi qaysi?\n"
@@ -2205,7 +2205,7 @@ async def btn_quiz(msg: Message):
 @dp.message(Command("bekor"))
 async def cmd_bekor(msg: Message):
     if qz_w.pop(msg.from_user.id, None):
-        await msg.answer("Quiz yaratish bekor qilindi.")
+        await msg.answer("Test tuzish bekor qilindi.")
 
 
 def _qz_state(m, step):
@@ -2232,7 +2232,7 @@ async def qz_after_parse(msg, name, data):
     try:
         qs, notes = qz_parse_file(name, data)
     except ValueError as e:
-        await msg.answer(f"❌ {e}\n\nNamunani ko'rish uchun «🧪 Quiz yaratish» tugmasini qayta bosing.")
+        await msg.answer(f"❌ {e}\n\nNamunani ko'rish uchun «🧪 Test tuzish» tugmasini qayta bosing.")
         return
     w = qz_w[uid]
     w.update(step="mode", qs=qs, title=qz_pretty_title(name), ts=time.time())
@@ -2293,11 +2293,11 @@ async def qz_on_cb(cb: CallbackQuery):
     w = qz_w.get(uid)
     if parts[1] == "x":
         qz_w.pop(uid, None)
-        await cb.message.answer("Quiz yaratish bekor qilindi.")
+        await cb.message.answer("Test tuzish bekor qilindi.")
         await cb.answer()
         return
     if not w or time.time() - w["ts"] > 1800:
-        await cb.answer("Jarayon eskirgan. «🧪 Quiz yaratish» ni qayta bosing.", show_alert=True)
+        await cb.answer("Jarayon eskirgan. «🧪 Test tuzish» ni qayta bosing.", show_alert=True)
         return
     n = len(w["qs"])
     w["ts"] = time.time()
