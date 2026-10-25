@@ -1289,13 +1289,34 @@ async def on_inline(q: InlineQuery):
     await q.answer(results, cache_time=300, is_personal=False)
 
 
-# ---------- Kun atamasi (09:00 dan 22:00 gacha, har soatda) ----------
+# ---------- Kun atamasi (09:00-22:00 oralig'ida, vaqtni o'zlari tanlaydi) ----------
 
 TERM_FIRST, TERM_LAST = 9, 22
 TERM_SLOTS = TERM_LAST - TERM_FIRST + 1
 TERM_ORDER = list(range(len(LEX)))
 random.Random(20261015).shuffle(TERM_ORDER)
-TERM_STEPS = {1: "Har soat (09:00-22:00)", 3: "Har 3 soatda", 24: "Kuniga 1 marta (13:00)", 0: "O'chirilgan"}
+
+
+def _tmask(hours):
+    return sum(1 << (h - TERM_FIRST) for h in hours if TERM_FIRST <= h <= TERM_LAST)
+
+
+# tayyor tanlovlar: kalit -> (nomi, soatlar niqobi)
+TERM_PRESETS = {
+    "2": ("Kuniga 2 marta (10:00 va 19:00)", _tmask((10, 19))),
+    "1": ("Kuniga 1 marta (13:00)", _tmask((13,))),
+    "3": ("Har 3 soatda", _tmask((9, 12, 15, 18, 21))),
+    "h": ("Har soat (09:00-22:00)", _tmask(range(TERM_FIRST, TERM_LAST + 1))),
+    "0": ("O'chirilgan", 0),
+}
+TERM_DEFAULT = TERM_PRESETS["2"][1]   # tanlamaganlar uchun: kuniga 2 marta
+TERM_LEGACY = {1: TERM_PRESETS["h"][1], 3: TERM_PRESETS["3"][1], 24: TERM_PRESETS["1"][1], 0: 0}
+term_sel = {}   # "vaqtni o'zim tanlayman" jarayonidagi tanlovlar
+
+
+def term_hours_text(mask):
+    hs = [h for h in range(TERM_FIRST, TERM_LAST + 1) if (mask >> (h - TERM_FIRST)) & 1]
+    return ", ".join(f"{h:02d}:00" for h in hs) or "o'chirilgan"
 
 
 def term_for(day, hour):
@@ -1303,42 +1324,61 @@ def term_for(day, hour):
     return TERM_ORDER[(day.toordinal() * TERM_SLOTS + (hour - TERM_FIRST)) % len(TERM_ORDER)]
 
 
-def term_due(step, hour):
-    return step == 1 or (step == 3 and hour in (9, 12, 15, 18, 21)) or (step == 24 and hour == 13)
+def term_due(mask, hour):
+    return bool((mask >> (hour - TERM_FIRST)) & 1)
 
 
 def term_kb(i):
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📚 Lug'atda ochish",
                               web_app=WebAppInfo(url=f"{LEX_URL}?l={quote(LEX[i]['l'])}"))],
-        [InlineKeyboardButton(text="⚙️ Xabarlar chastotasi", callback_data=f"tps:{i}")],
+        [InlineKeyboardButton(text="⚙️ Xabarlar vaqti", callback_data=f"tps:{i}")],
     ])
 
 
 def term_settings_kb(i):
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Har soat", callback_data=f"tp:1:{i}"),
-         InlineKeyboardButton(text="Har 3 soatda", callback_data=f"tp:3:{i}")],
-        [InlineKeyboardButton(text="Kuniga 1 marta", callback_data=f"tp:24:{i}"),
-         InlineKeyboardButton(text="O'chirish", callback_data=f"tp:0:{i}")],
-        [InlineKeyboardButton(text="« Orqaga", callback_data=f"tpb:{i}")],
+        [InlineKeyboardButton(text="Kuniga 2 marta", callback_data=f"tp:2:{i}"),
+         InlineKeyboardButton(text="Kuniga 1 marta", callback_data=f"tp:1:{i}")],
+        [InlineKeyboardButton(text="Har 3 soatda", callback_data=f"tp:3:{i}"),
+         InlineKeyboardButton(text="Har soat", callback_data=f"tp:h:{i}")],
+        [InlineKeyboardButton(text="🕒 Vaqtni o'zim tanlayman", callback_data=f"tpc:{i}")],
+        [InlineKeyboardButton(text="O'chirish", callback_data=f"tp:0:{i}"),
+         InlineKeyboardButton(text="« Orqaga", callback_data=f"tpb:{i}")],
     ])
 
 
+def term_grid_kb(i, sel):
+    hours = list(range(TERM_FIRST, TERM_LAST + 1))
+    rows = []
+    for k in range(0, len(hours), 4):
+        rows.append([InlineKeyboardButton(text=("✅ " if h in sel else "") + f"{h:02d}:00",
+                                          callback_data=f"tpt:{h}:{i}") for h in hours[k:k + 4]])
+    rows.append([InlineKeyboardButton(text="💾 Saqlash", callback_data=f"tpk:{i}"),
+                 InlineKeyboardButton(text="« Orqaga", callback_data=f"tps:{i}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _row_mask(row):
+    if row.get("hours") is not None:
+        return int(row["hours"])
+    return TERM_LEGACY.get(row.get("step"), TERM_DEFAULT)
+
+
 async def term_prefs():
-    """Standart (har soat) emas, boshqa tanlov qilgan foydalanuvchilar: {user_id: step}."""
+    """Tanlov qilgan foydalanuvchilar: {user_id: soatlar niqobi}. Qolganlar standart (kuniga 2 marta)."""
     out, offset = {}, 0
     try:
         while True:
             async with aiohttp.ClientSession() as s:
                 async with s.get(
-                    f"{SUPABASE_URL}/rest/v1/term_prefs?select=user_id,step&step=neq.1"
+                    f"{SUPABASE_URL}/rest/v1/term_prefs?select=user_id,step,hours"
                     f"&order=user_id.asc&limit=1000&offset={offset}",
                     headers=db_headers(), timeout=aiohttp.ClientTimeout(total=15),
                 ) as r:
                     rows = await r.json() if r.status < 300 else []
             for x in rows:
-                out[x["user_id"]] = x["step"]
+                out[x["user_id"]] = _row_mask(x)
             if len(rows) < 1000:
                 break
             offset += 1000
@@ -1347,13 +1387,27 @@ async def term_prefs():
     return out
 
 
-async def term_set(uid, step):
+async def term_get(uid):
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.get(
+                f"{SUPABASE_URL}/rest/v1/term_prefs?select=user_id,step,hours&user_id=eq.{uid}",
+                headers=db_headers(), timeout=aiohttp.ClientTimeout(total=10),
+            ) as r:
+                rows = await r.json() if r.status < 300 else []
+        return _row_mask(rows[0]) if rows else TERM_DEFAULT
+    except Exception as e:
+        print("term_get xatosi:", e)
+        return TERM_DEFAULT
+
+
+async def term_set(uid, mask):
     try:
         async with aiohttp.ClientSession() as s:
             async with s.post(
                 f"{SUPABASE_URL}/rest/v1/term_prefs?on_conflict=user_id",
                 headers=db_headers({"Prefer": "resolution=merge-duplicates,return=minimal"}),
-                json={"user_id": uid, "step": step},
+                json={"user_id": uid, "hours": mask},
                 timeout=aiohttp.ClientTimeout(total=10),
             ) as r:
                 if r.status >= 300:
@@ -1374,7 +1428,7 @@ async def term_send(uid, i, hour, silent=True):
 
 @dp.message(Command("atama"))
 async def cmd_term(msg: Message):
-    """Hozirgi atamani so'rash va xabarlar chastotasini o'zgartirish."""
+    """Hozirgi atamani so'rash va xabarlar vaqtini o'zgartirish."""
     if not LEX:
         return
     hour = min(max(datetime.now(TZ).hour, TERM_FIRST), TERM_LAST)
@@ -1388,7 +1442,7 @@ async def on_term_settings(cb: CallbackQuery):
         await cb.message.edit_reply_markup(reply_markup=term_settings_kb(i))
     except Exception:
         pass
-    await cb.answer()
+    await cb.answer("Atamalar qachon kelsin?")
 
 
 @dp.callback_query(F.data.startswith("tpb:"))
@@ -1404,25 +1458,87 @@ async def on_term_back(cb: CallbackQuery):
 @dp.callback_query(F.data.startswith("tp:"))
 async def on_term_pick(cb: CallbackQuery):
     try:
-        _, st, i = cb.data.split(":")
-        st, i = int(st), int(i)
-        assert st in TERM_STEPS
+        _, key, i = cb.data.split(":")
+        i = int(i)
+        name, mask = TERM_PRESETS[key]
     except Exception:
         await cb.answer()
         return
-    if not await term_set(cb.from_user.id, st):
+    if not await term_set(cb.from_user.id, mask):
         await cb.answer("Hozir saqlab bo'lmadi. Keyinroq urinib ko'ring.", show_alert=True)
         return
     try:
         await cb.message.edit_reply_markup(reply_markup=term_kb(i))
     except Exception:
         pass
-    extra = " Qayta yoqish uchun /atama ni bosing." if st == 0 else ""
-    await cb.answer(f"Saqlandi: {TERM_STEPS[st]}.{extra}", show_alert=(st == 0))
+    extra = " Qayta yoqish uchun /atama ni bosing." if mask == 0 else f" Vaqtlar: {term_hours_text(mask)}."
+    await cb.answer(f"Saqlandi: {name}.{extra}", show_alert=True)
+
+
+@dp.callback_query(F.data.startswith("tpc:"))
+async def on_term_custom(cb: CallbackQuery):
+    try:
+        i = int(cb.data.split(":")[1])
+    except Exception:
+        await cb.answer()
+        return
+    uid = cb.from_user.id
+    mask = await term_get(uid)
+    term_sel[uid] = {h for h in range(TERM_FIRST, TERM_LAST + 1) if (mask >> (h - TERM_FIRST)) & 1}
+    try:
+        await cb.message.edit_reply_markup(reply_markup=term_grid_kb(i, term_sel[uid]))
+    except Exception:
+        pass
+    await cb.answer("Kerakli vaqtlarni belgilang, so'ng «Saqlash» ni bosing.")
+
+
+@dp.callback_query(F.data.startswith("tpt:"))
+async def on_term_toggle(cb: CallbackQuery):
+    try:
+        _, h, i = cb.data.split(":")
+        h, i = int(h), int(i)
+    except Exception:
+        await cb.answer()
+        return
+    uid = cb.from_user.id
+    sel = term_sel.get(uid)
+    if sel is None:
+        mask = await term_get(uid)
+        sel = term_sel[uid] = {x for x in range(TERM_FIRST, TERM_LAST + 1) if (mask >> (x - TERM_FIRST)) & 1}
+    sel.symmetric_difference_update({h})
+    try:
+        await cb.message.edit_reply_markup(reply_markup=term_grid_kb(i, sel))
+    except Exception:
+        pass
+    await cb.answer()
+
+
+@dp.callback_query(F.data.startswith("tpk:"))
+async def on_term_save(cb: CallbackQuery):
+    try:
+        i = int(cb.data.split(":")[1])
+    except Exception:
+        await cb.answer()
+        return
+    uid = cb.from_user.id
+    sel = term_sel.get(uid)
+    if sel is None:
+        await cb.answer("Avval vaqtlarni tanlang.", show_alert=True)
+        return
+    mask = _tmask(sel)
+    if not await term_set(uid, mask):
+        await cb.answer("Hozir saqlab bo'lmadi. Keyinroq urinib ko'ring.", show_alert=True)
+        return
+    term_sel.pop(uid, None)
+    try:
+        await cb.message.edit_reply_markup(reply_markup=term_kb(i))
+    except Exception:
+        pass
+    await cb.answer("Saqlandi. Vaqtlar: " + term_hours_text(mask), show_alert=True)
 
 
 async def term_loop():
-    """Har soat boshida (09:00-22:00, Toshkent) obunadagilarga bitta atama yuboradi (ovozsiz)."""
+    """Har soat boshida (09:00-22:00, Toshkent) shu soatni tanlagan obunadagilarga atama yuboradi (ovozsiz)."""
     while True:
         now = datetime.now(TZ)
         nxt = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
@@ -1434,7 +1550,7 @@ async def term_loop():
             prefs = await term_prefs()
             i = term_for(nxt.date(), hour)
             for uid in await qotd_users():
-                if not term_due(prefs.get(uid, 1), hour):
+                if not term_due(prefs.get(uid, TERM_DEFAULT), hour):
                     continue
                 try:
                     await term_send(uid, i, hour)
@@ -1443,7 +1559,6 @@ async def term_loop():
                 await asyncio.sleep(0.06)
         except Exception as e:
             print("term_loop xatosi:", e)
-
 
 # ---------- Zaif mavzular tahlili ----------
 
@@ -2198,8 +2313,8 @@ async def btn_quiz(msg: Message):
     lexicon_mode.pop(uid, None)
     if await need_subscribe(msg):
         return
-    qz_w[uid] = {"step": "file", "ts": time.time()}
-    await msg.answer(QZ_HELP)
+    m = await msg.answer(QZ_HELP)
+    qz_w[uid] = {"step": "file", "ts": time.time(), "help": m.message_id}
 
 
 @dp.message(Command("bekor"))
@@ -2235,6 +2350,11 @@ async def qz_after_parse(msg, name, data):
         await msg.answer(f"❌ {e}\n\nNamunani ko'rish uchun «🧪 Test tuzish» tugmasini qayta bosing.")
         return
     w = qz_w[uid]
+    if w.get("help"):
+        try:
+            await bot.delete_message(msg.chat.id, w.pop("help"))
+        except Exception:
+            pass
     w.update(step="mode", qs=qs, title=qz_pretty_title(name), ts=time.time())
     text = f"✅ {len(qs)} ta savol topildi."
     if notes:
@@ -2277,6 +2397,12 @@ async def qz_on_count(msg: Message):
         await msg.answer(f"1 dan {n} gacha raqam yozing.")
         return
     w.update(count=int(t), step="time", ts=time.time())
+    for mid in (w.pop("prompt", None), msg.message_id):   # so'rov va yozilgan raqam o'chadi
+        if mid:
+            try:
+                await bot.delete_message(msg.chat.id, mid)
+            except Exception:
+                pass
     await msg.answer("Har bir savolga necha soniya vaqt beramiz?", reply_markup=_qz_time_kb())
 
 
@@ -2293,6 +2419,10 @@ async def qz_on_cb(cb: CallbackQuery):
     w = qz_w.get(uid)
     if parts[1] == "x":
         qz_w.pop(uid, None)
+        try:
+            await cb.message.delete()
+        except Exception:
+            pass
         await cb.message.answer("Test tuzish bekor qilindi.")
         await cb.answer()
         return
@@ -2302,6 +2432,11 @@ async def qz_on_cb(cb: CallbackQuery):
     n = len(w["qs"])
     w["ts"] = time.time()
     kind = parts[1]
+    if kind in ("m", "s", "c"):   # tanlangan savol va tugmalar o'chadi
+        try:
+            await cb.message.delete()
+        except Exception:
+            pass
     if kind == "m":
         w["mode"] = parts[2]
         if parts[2] == "all":
@@ -2324,7 +2459,8 @@ async def qz_on_cb(cb: CallbackQuery):
     elif kind == "c":
         if parts[2] == "x":
             w["step"] = "count_text"
-            await cb.message.answer(f"Nechta savollik test kerak? 1 dan {n} gacha raqam yozing.")
+            m = await cb.message.answer(f"Nechta savollik test kerak? 1 dan {n} gacha raqam yozing.")
+            w["prompt"] = m.message_id
         else:
             w["count"] = max(1, min(int(parts[2]), n)); w["step"] = "time"
             await cb.message.answer("Har bir savolga necha soniya vaqt beramiz?", reply_markup=_qz_time_kb())
@@ -2342,6 +2478,10 @@ async def qz_create(cb, w):
         await cb.answer(f"Kuniga {QZ_DAILY_LIMIT} tagacha test yaratish mumkin.", show_alert=True)
         return
     await cb.answer("Yaratilmoqda...")
+    try:
+        await cb.message.delete()
+    except Exception:
+        pass
     rnd = random.Random()
     prepared = [qz_shuffle_options(q, rnd) for q in w["qs"]]
     n = len(prepared)
