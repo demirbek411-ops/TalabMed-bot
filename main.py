@@ -389,8 +389,12 @@ async def dbtest(msg: Message):
 
 @dp.message(CommandStart())
 async def start(msg: Message, command: CommandObject):
-    feedback_mode.pop(msg.from_user.id, None)
     args = (command.args or "") if command else ""
+    if msg.chat.type != "private":     # guruhda faqat test havolasi ishlaydi
+        if args.startswith("qz_"):
+            await qg_deeplink(msg, args)
+        return
+    feedback_mode.pop(msg.from_user.id, None)
     left = await not_subscribed(msg.from_user.id)
     await save_user(msg.from_user.id, msg.from_user.first_name, msg.from_user.username, not left)
     if args.startswith("qz_"):
@@ -2282,16 +2286,21 @@ def qz_post_chunks(qset):
     lines = []
     for i, part in enumerate(qset["parts"]):
         url = f"https://t.me/{BOT_USERNAME}?start=qz_{qset['id']}_{i}"
-        lines.append(f"{{{html.escape(part['l'])}}}    <a href=\"{url}\">Boshlash</a>")
+        gurl = f"https://t.me/{BOT_USERNAME}?startgroup=qz_{qset['id']}_{i}"
+        lines.append(f"{{{html.escape(part['l'])}}}    <a href=\"{url}\">Boshlash</a>  ·  <a href=\"{gurl}\">Guruhda</a>")
     head = (
         "🩺 <b>TALABA MED</b> 🔬\n"
         f"{html.escape(qset['title'])}\n"
         f"Tayyorladi: <b>{html.escape(qset.get('by') or '')}</b>\n"
-        f"⏱ Har savolga {qset['secs']} soniya\n\n"
+        f"⏱ Har savolga {qset['secs']} soniya\n"
+        "👥 «Guruhda» ni bossangiz, guruhning hamma a'zosi birga yechadi\n\n"
     )
+    foot = f"\n\nGuruhda: guruhga /test@{BOT_USERNAME} {qset['id']} 1 deb yozing (1 = qism raqami)"
     chunks = []
-    for k in range(0, len(lines), 80):
-        chunks.append((head if k == 0 else "") + "\n".join(lines[k:k + 80]))
+    step = 45
+    for k in range(0, len(lines), step):
+        last = k + step >= len(lines)
+        chunks.append((head if k == 0 else "") + "\n".join(lines[k:k + step]) + (foot if last else ""))
     return chunks
 
 
@@ -2507,6 +2516,192 @@ async def qz_create(cb, w):
         await qz_send_html(cb.message.chat.id, chunk)
 
 
+# ---- guruhda test (guruhning hamma a'zosi birga yechadi) ----
+
+qg_sessions = {}   # chat_id -> sessiya
+qg_poll_map = {}   # poll_id -> chat_id
+
+
+async def qg_is_admin(chat_id, uid):
+    try:
+        m = await bot.get_chat_member(chat_id, uid)
+        return m.status in ("creator", "administrator")
+    except Exception:
+        return False
+
+
+async def qg_prep(chat_id, qset, p, starter):
+    part = qset["parts"][p]
+    text = (
+        f"🎲 “{qset['title']} {part['l']}” guruh testiga tayyorlaning\n\n"
+        f"🖊 {len(part['qs'])} ta savol\n"
+        f"⏱ Har bir savol uchun {qset['secs']} soniya\n"
+        "👥 Guruhning hamma a'zosi qatnasha oladi, natija oxirida chiqadi\n\n"
+        "🏁 Hamma tayyor bo'lganda boshlovchi quyidagi tugmani bossin.\n"
+        f"To'xtatish: /stop@{BOT_USERNAME}"
+    )
+    await bot.send_message(chat_id, text, reply_markup=_qz_kb([[("🏁 Boshlash", f"qg:{qset['id']}:{p}:{starter}")]]))
+
+
+async def qg_open(msg, qid, p):
+    chat_id, uid = msg.chat.id, msg.from_user.id
+    if chat_id in qg_sessions:
+        await msg.answer("Guruhda test davom etyapti. To'xtatish: /stop")
+        return
+    if await not_subscribed(uid):
+        await msg.answer(
+            "Testni boshlash uchun avval botda majburiy kanallarga obuna bo'ling: "
+            f"https://t.me/{BOT_USERNAME}?start=1"
+        )
+        return
+    qset = await qz_get(qid)
+    if not qset or p < 0 or p >= len(qset["parts"]):
+        await msg.answer("Bu test topilmadi yoki o'chirilgan.")
+        return
+    await qg_prep(chat_id, qset, p, uid)
+
+
+async def qg_deeplink(msg, args):
+    m = re.fullmatch(r"qz_([a-z0-9]+)_(\d+)", args or "")
+    if m:
+        await qg_open(msg, m.group(1), int(m.group(2)))
+
+
+@dp.message(Command("test"))
+async def cmd_test(msg: Message, command: CommandObject):
+    """Guruhda: /test TEST_ID [QISM_RAQAMI]"""
+    if msg.chat.type == "private":
+        await msg.answer("Guruhda test boshlash uchun postdagi «Guruhda» tugmasini bosing yoki guruhga /test TEST_ID yozing.")
+        return
+    parts = (command.args or "").split()
+    if not parts or not re.fullmatch(r"[a-z0-9]+", parts[0].lower()):
+        await msg.answer("Foydalanish: /test TEST_ID QISM_RAQAMI (masalan: /test abc1234 1)")
+        return
+    p = int(parts[1]) - 1 if len(parts) > 1 and parts[1].isdigit() else 0
+    await qg_open(msg, parts[0].lower(), p)
+
+
+@dp.callback_query(F.data.startswith("qg:"))
+async def qg_start_cb(cb: CallbackQuery):
+    try:
+        _, qid, p, starter = cb.data.split(":")
+        p, starter = int(p), int(starter)
+    except Exception:
+        await cb.answer()
+        return
+    chat_id = cb.message.chat.id
+    if cb.from_user.id != starter and not await qg_is_admin(chat_id, cb.from_user.id):
+        await cb.answer("Testni faqat uni boshlagan kishi yoki guruh admini boshlay oladi.", show_alert=True)
+        return
+    if chat_id in qg_sessions:
+        await cb.answer("Test allaqachon boshlangan.", show_alert=True)
+        return
+    qset = await qz_get(qid)
+    if not qset or p >= len(qset["parts"]):
+        await cb.answer("Test topilmadi.", show_alert=True)
+        return
+    part = qset["parts"][p]
+    try:
+        await cb.message.delete()
+    except Exception:
+        pass
+    qg_sessions[chat_id] = {"set": qid, "p": p, "title": qset["title"], "label": part["l"], "secs": qset["secs"],
+                            "qs": part["qs"], "i": 0, "poll_id": None, "mid": None, "t_poll": 0.0, "task": None,
+                            "starter": cb.from_user.id, "scores": {}, "done": set()}
+    await cb.answer()
+    await qg_send(chat_id)
+
+
+async def qg_send(chat_id):
+    s = qg_sessions.get(chat_id)
+    if not s:
+        return
+    if s["i"] >= len(s["qs"]):
+        await qg_finish(chat_id)
+        return
+    q = s["qs"][s["i"]]
+    head = f"[{s['i'] + 1}/{len(s['qs'])}]"
+    letters = "ABCDEFGHIJ"
+    try:
+        if len(head) + 1 + len(q["q"]) > 300 or any(len(o) > 100 for o in q["o"]):
+            text = f"{head} {q['q']}\n\n" + "\n".join(f"{letters[k]}) {o}" for k, o in enumerate(q["o"]))
+            await bot.send_message(chat_id, text[:4000])
+            question, options = f"{head} Javobni tanlang", list(letters[:len(q["o"])])
+        else:
+            question, options = f"{head} {q['q']}", q["o"]
+        m = await bot.send_poll(chat_id, question=question, options=options, type="quiz",
+                                correct_option_id=q["c"], is_anonymous=False, open_period=s["secs"])
+    except Exception as e:
+        print("guruh savoli yuborilmadi:", e)
+        qg_sessions.pop(chat_id, None)
+        try:
+            await bot.send_message(chat_id, "Savolni yuborib bo'lmadi. Testni qaytadan boshlang.")
+        except Exception:
+            pass
+        return
+    qg_poll_map[m.poll.id] = chat_id
+    s["poll_id"], s["mid"], s["t_poll"], s["done"] = m.poll.id, m.message_id, time.time(), set()
+    s["task"] = asyncio.create_task(qg_timeout(chat_id, s["i"], s["secs"]))
+
+
+async def qg_timeout(chat_id, i, secs):
+    try:
+        await asyncio.sleep(secs + 2)
+    except asyncio.CancelledError:
+        return
+    s = qg_sessions.get(chat_id)
+    if s and s["i"] == i:
+        s["i"] += 1
+        await qg_send(chat_id)
+
+
+async def qg_record(chat_id, ev):
+    s = qg_sessions.get(chat_id)
+    if not s or ev.poll_id != s["poll_id"] or not ev.option_ids or ev.user is None:
+        return
+    uid = ev.user.id
+    if uid in s["done"]:
+        return
+    s["done"].add(uid)
+    sc = s["scores"].setdefault(uid, {"name": ev.user.first_name or "Ishtirokchi", "ok": 0, "ans": 0, "t": 0.0})
+    sc["ans"] += 1
+    sc["t"] += max(0.0, time.time() - s["t_poll"])
+    if ev.option_ids[0] == s["qs"][s["i"]]["c"]:
+        sc["ok"] += 1
+
+
+async def qg_finish(chat_id, early=False):
+    s = qg_sessions.pop(chat_id, None)
+    if not s:
+        return
+    if s["task"]:
+        s["task"].cancel()
+    if early and s.get("mid"):
+        try:
+            await bot.stop_poll(chat_id, s["mid"])
+        except Exception:
+            pass
+    for pid in [k for k, v in qg_poll_map.items() if v == chat_id]:
+        qg_poll_map.pop(pid, None)
+    n = len(s["qs"])
+    rows = sorted(s["scores"].values(), key=lambda sc: (-sc["ok"], sc["t"]))
+    lines = [
+        f"🏁 Guruh testi {'to‘xtatildi' if early else 'yakunlandi'}: {s['title']} {s['label']}",
+        f"👥 Qatnashganlar: {len(rows)}", "",
+    ]
+    medals = ["🥇", "🥈", "🥉"]
+    for k, sc in enumerate(rows[:15]):
+        mark = medals[k] if k < 3 else f"{k + 1}."
+        t = int(sc["t"])
+        lines.append(f"{mark} {sc['name'][:20]} — {sc['ok']}/{n} ({round(100 * sc['ok'] / n)}%) · {t // 60}:{t % 60:02d}")
+    if len(rows) > 15:
+        lines.append(f"... va yana {len(rows) - 15} kishi")
+    if not rows:
+        lines.append("Hech kim javob bermadi.")
+    lines += ["", "(to'g'ri javoblar soni, foiz va javob berish vaqti)", f"Qayta o'ynash: /test@{BOT_USERNAME} {s['set']} {s['p'] + 1}"]
+    await bot.send_message(chat_id, "\n".join(lines))
+
+
 # ---- test o'tkazish ----
 
 async def qz_prep(chat_id, qset, p):
@@ -2518,7 +2713,11 @@ async def qz_prep(chat_id, qset, p):
         "🏁 Tayyor bo'lganingizda quyidagi tugmani bosing.\n"
         "Uni to'xtatish uchun /stop buyrug'ini yuboring."
     )
-    await bot.send_message(chat_id, text, reply_markup=_qz_kb([[("🏁 Boshlash", f"qs:{qset['id']}:{p}")]]))
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🏁 Boshlash", callback_data=f"qs:{qset['id']}:{p}")],
+        [InlineKeyboardButton(text="👥 Guruhda boshlash", url=f"https://t.me/{BOT_USERNAME}?startgroup=qz_{qset['id']}_{p}")],
+    ])
+    await bot.send_message(chat_id, text, reply_markup=kb)
 
 
 async def qz_deeplink(chat_id, uid, args):
@@ -2599,6 +2798,10 @@ async def qz_timeout(uid, i, secs):
 
 @dp.poll_answer()
 async def qz_on_answer(ev: PollAnswer):
+    cid = qg_poll_map.get(ev.poll_id)
+    if cid is not None:          # guruh testi
+        await qg_record(cid, ev)
+        return
     uid = ev.user.id
     s = qz_sessions.get(uid)
     if not s or ev.poll_id != s["poll_id"] or not ev.option_ids:
@@ -2656,6 +2859,15 @@ async def qz_finish(uid, early=False):
 
 @dp.message(Command("stop"))
 async def cmd_stop(msg: Message):
+    if msg.chat.type != "private":
+        gs = qg_sessions.get(msg.chat.id)
+        if not gs:
+            await msg.answer("Guruhda faol test yo'q.")
+        elif msg.from_user.id == gs["starter"] or await qg_is_admin(msg.chat.id, msg.from_user.id):
+            await qg_finish(msg.chat.id, early=True)
+        else:
+            await msg.answer("Testni faqat boshlovchi yoki guruh admini to'xtata oladi.")
+        return
     if msg.from_user.id in qz_sessions:
         await qz_finish(msg.from_user.id, early=True)
     else:
