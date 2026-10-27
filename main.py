@@ -2113,40 +2113,76 @@ def qz_parse_letter(lines):
 
 
 def qz_parse_rows(rows):
-    """Excel: Savol | A | B | C | D | To'g'ri javob."""
-    notes, qs = [], []
-    if not rows: return [], notes
-    head = [c.lower() for c in rows[0]]
-    has_head = any(re.search(r"savol|question|вопрос", c) for c in head)
-    ans_col = None
-    if has_head:
-        for i, c in enumerate(head):
-            if re.search(r"to['‘’ʻ`]?g['‘’ʻ`]?ri|javob|answer|correct|key|ответ|kalit", c): ans_col = i
-        q_col = next((i for i, c in enumerate(head) if re.search(r"savol|question|вопрос", c)), 0)
-        body = rows[1:]
-    else:
-        q_col, body = 0, rows
-        sample = [r[-1].strip().upper() for r in body[:20] if len(r) > 3 and r[-1].strip()]
-        if sample and all(re.fullmatch(r"[A-H1-8]", x) for x in sample):
-            ans_col = max(len(r) for r in body) - 1
+    """Excel: Savol ustuni, undan keyingi ustunlar variantlar. Kalit ustuni (A/B/C...) bo'lmasa, 1-variant to'g'ri."""
+    notes = []
+    rows = [[(c or "").strip() for c in r] for r in rows]
+    rows = [r for r in rows if any(r)]
+    if not rows:
+        return [], notes
+    width = max(len(r) for r in rows)
+    rows = [r + [""] * (width - len(r)) for r in rows]
+
+    def is_head(r):
+        pat = r"savol|question|вопрос|topshiriq|test|javob|variant|muqobil|to['‘’ʻ`]?g['‘’ʻ`]?ri|№|^no$|t/r|answer|correct|ответ"
+        return sum(1 for c in r if len(c) <= 30 and re.search(pat, c.lower())) >= 2
+
+    head = rows[0] if is_head(rows[0]) else None
+    body = rows[1:] if head else rows
+    low = [c.lower() for c in head] if head else [""] * width
+    vals0 = [r[0] for r in body if r[0]]
+    skip0 = len(vals0) >= 3 and sum(1 for v in vals0 if re.fullmatch(r"\d{1,4}[\.\)]?", v)) >= 0.9 * len(vals0)
+    cols = [j for j in range(width) if not (j == 0 and skip0)]
+    q_col = None
+    if head:
+        for j in cols:
+            if re.search(r"savol|question|вопрос|topshiriq", low[j]):
+                q_col = j
+                break
+    if q_col is None:
+        q_col = cols[0]
+    key_col = None
+    for j in cols:
+        if j == q_col:
+            continue
+        vals = [r[j].upper() for r in body if r[j]]
+        if len(vals) >= 3 and all(re.fullmatch(r"[A-H1-8]", v) for v in vals):
+            if (head and re.search(r"javob|answer|correct|kalit|key|to['‘’ʻ`]?g['‘’ʻ`]?ri|ответ", low[j])) or j == cols[-1]:
+                key_col = j
+    opt_cols = [j for j in cols if j > q_col and j != key_col]
+    qs = []
     for r in body:
-        r = r + [""] * 12
-        q = r[q_col].strip()
-        if not q: continue
-        opt_idx = [i for i in range(len(r)) if i > q_col and i != ans_col and r[i].strip()]
-        opts = [r[i].strip() for i in opt_idx]
-        if len(opts) < 2: continue
+        q = r[q_col]
+        if not q:
+            continue
+        opts = [r[j] for j in opt_cols if r[j]]
         c = None
-        if ans_col is not None and r[ans_col].strip():
-            a = r[ans_col].strip()
-            if re.fullmatch(r"[A-Ha-h]", a): c = ord(a.upper()) - 65
-            elif re.fullmatch(r"[1-8]", a): c = int(a) - 1
-            else:
-                low = [o.lower() for o in opts]
-                c = low.index(a.lower()) if a.lower() in low else None
-            if c is not None and c >= len(opts): c = None
+        if key_col is None:
+            c = 0                      # 1-variant to'g'ri
+        elif r[key_col]:
+            a = r[key_col].upper()
+            c = ord(a) - 65 if a.isalpha() else int(a) - 1
+            if c >= len(opts):
+                c = None
         qs.append({"q": q, "o": opts, "c": c})
+    if key_col is None and not head:
+        notes.append("To'g'ri javob belgilanmagan edi: har savolning 1-varianti to'g'ri deb olindi.")
     return _qz_finish(qs, notes)
+
+
+_QZ_LOOKALIKE = dict(zip("АВЕКМНОРСТХаеорсухк", "ABEKMHOPCTXaeopcyxk"))
+
+
+def _qz_norm_text(t):
+    """Bo'sh joylarni, apostroflarni va lotin so'z ichidagi kirill o'xshash harflarni tuzatadi."""
+    t = " ".join(str(t).split())
+    t = re.sub(r"([oOgG])[’ʼ`´']", r"\1‘", t)
+
+    def tok(m):
+        w = m.group(0)
+        if re.search(r"[A-Za-z]", w) and re.search(r"[\u0400-\u04FF]", w):
+            return "".join(_QZ_LOOKALIKE.get(c, c) for c in w)
+        return w
+    return re.sub(r"\S+", tok, t)
 
 
 def qz_parse_file(name, data):
@@ -2177,10 +2213,19 @@ def qz_parse_file(name, data):
         raise ValueError("Fayldan savol topilmadi.")
     clean = []
     for q in qs:
-        o = [x for x in q["o"] if x]
-        if len(o) < 2 or len(o) > 10 or not q["q"] or q["c"] is None or q["c"] >= len(o):
+        raw = [_qz_norm_text(x) for x in q["o"] if x and x.strip()]
+        ctext = raw[q["c"]].lower() if q["c"] is not None and q["c"] < len(raw) else None
+        o, seen = [], {}
+        for x in raw:
+            if x.lower() in seen:
+                continue
+            seen[x.lower()] = len(o)
+            o.append(x)
+        qt = _qz_norm_text(q["q"])
+        c = seen.get(ctext) if ctext is not None else None
+        if len(o) < 2 or len(o) > 10 or not qt or c is None:
             continue
-        clean.append({"q": q["q"], "o": o, "c": q["c"]})
+        clean.append({"q": qt, "o": o, "c": c})
     if len(clean) > QZ_MAX_Q:
         notes.append(f"Faqat dastlabki {QZ_MAX_Q} ta savol olindi.")
         clean = clean[:QZ_MAX_Q]
